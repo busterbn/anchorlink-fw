@@ -7,6 +7,6 @@ manifest:
     - name: nrf
       remote: ncs
       repo-path: sdk-nrf
-      revision: v3.1.1
+      revision: v3.3.0-preview2
       import:
         path-prefix: deps
