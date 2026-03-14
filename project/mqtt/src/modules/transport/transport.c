@@ -122,10 +122,20 @@ static int topics_build(void)
 /* Serialize payload to JSON string, returns length or negative error */
 static int payload_to_json(const struct payload *p, char *buf, size_t buf_size)
 {
+	/* snprintk doesn't support %f, so format floats as fixed-point integers */
+	int voltage_int = (int)p->voltage;
+	int voltage_frac = (int)((p->voltage - voltage_int) * 100);
+	if (voltage_frac < 0) { voltage_frac = -voltage_frac; }
+
+	int power_int = (int)p->power_w;
+	int power_frac = (int)((p->power_w - power_int) * 10);
+	if (power_frac < 0) { power_frac = -power_frac; }
+
 	return snprintk(buf, buf_size,
-		"{\"voltage\":%.2f,\"power_w\":%.1f,"
+		"{\"voltage\":%d.%02d,\"power_w\":%d.%d,"
 		"\"relays\":[%s,%s,%s,%s,%s],\"ts\":%lld}",
-		(double)p->voltage, (double)p->power_w,
+		voltage_int, voltage_frac,
+		power_int, power_frac,
 		p->relays[0] ? "true" : "false",
 		p->relays[1] ? "true" : "false",
 		p->relays[2] ? "true" : "false",

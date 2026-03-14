@@ -14,6 +14,8 @@ static const struct gpio_dt_spec relays[NUM_RELAYS] = {
 	GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios),
 };
 
+static bool relay_state[NUM_RELAYS];
+
 int relays_init(void)
 {
 	for (int i = 0; i < NUM_RELAYS; i++) {
@@ -37,7 +39,11 @@ int relay_set(uint8_t idx, bool on)
 	if (idx >= NUM_RELAYS) {
 		return -EINVAL;
 	}
-	return gpio_pin_set_dt(&relays[idx], on);
+	int err = gpio_pin_set_dt(&relays[idx], on);
+	if (!err) {
+		relay_state[idx] = on;
+	}
+	return err;
 }
 
 bool relay_get(uint8_t idx)
@@ -45,7 +51,7 @@ bool relay_get(uint8_t idx)
 	if (idx >= NUM_RELAYS) {
 		return false;
 	}
-	return gpio_pin_get_dt(&relays[idx]);
+	return relay_state[idx];
 }
 
 int relays_set_all(uint8_t mask)
