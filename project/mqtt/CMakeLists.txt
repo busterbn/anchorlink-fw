@@ -10,6 +10,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(mqtt)
 
 target_sources(app PRIVATE src/main.c src/relays.c src/power.c)
+target_include_directories(app PRIVATE src)
 
 # Include files that are common for all modules
 add_subdirectory(src/common)

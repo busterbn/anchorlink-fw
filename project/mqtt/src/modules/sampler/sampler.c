@@ -1,43 +1,44 @@
 /*
- * Copyright (c) 2023 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ * Sampler module — reads sensors and publishes structured payload.
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
+#include <date_time.h>
 
 #include "message_channel.h"
+#include "relays.h"
+#include "power.h"
 
-#define FORMAT_STRING "Hello MQTT! Current uptime is: %d"
-
-/* Register log module */
 LOG_MODULE_REGISTER(sampler, CONFIG_MQTT_SAMPLE_SAMPLER_LOG_LEVEL);
 
-/* Register subscriber */
 ZBUS_SUBSCRIBER_DEFINE(sampler, CONFIG_MQTT_SAMPLE_SAMPLER_MESSAGE_QUEUE_SIZE);
 
 static void sample(void)
 {
 	struct payload payload = { 0 };
-	uint32_t uptime = k_uptime_get_32();
-	int err, len;
+	int32_t battery_mv = 0;
+	int32_t current_ma = 0;
 
-	/* The payload is user defined and can be sampled from any source.
-	 * Default case is to populate a string and send it on the payload channel.
-	 */
+	power_read_battery_mv(&battery_mv);
+	power_read_current_ma(&current_ma);
 
-	len = snprintk(payload.string, sizeof(payload.string), FORMAT_STRING, uptime);
-	if ((len < 0) || (len >= sizeof(payload))) {
-		LOG_ERR("Failed to construct message, error: %d", len);
-		SEND_FATAL_ERROR();
-		return;
+	payload.voltage = battery_mv / 1000.0f;
+	payload.power_w = (battery_mv / 1000.0f) * (current_ma / 1000.0f);
+
+	for (int i = 0; i < NUM_RELAYS; i++) {
+		payload.relays[i] = relay_get(i);
 	}
 
-	err = zbus_chan_pub(&PAYLOAD_CHAN, &payload, K_SECONDS(1));
+	int64_t ts;
+	if (date_time_now(&ts) == 0) {
+		payload.ts = ts / 1000; /* ms to seconds */
+	}
+
+	int err = zbus_chan_pub(&PAYLOAD_CHAN, &payload, K_SECONDS(1));
 	if (err) {
-		LOG_ERR("zbus_chan_pub, error:%d", err);
+		LOG_ERR("zbus_chan_pub error: %d", err);
 		SEND_FATAL_ERROR();
 	}
 }

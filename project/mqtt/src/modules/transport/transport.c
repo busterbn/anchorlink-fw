@@ -1,50 +1,76 @@
 /*
- * Copyright (c) 2023 Nordic Semiconductor ASA
- *
- * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ * MQTT transport module using raw Zephyr MQTT client API.
+ * Handles connection, LWT, publishing state, subscribing to commands,
+ * and parsing incoming commands.
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/smf.h>
-#include <net/mqtt_helper.h>
+#include <zephyr/net/mqtt.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/posix/poll.h>
+#include <zephyr/posix/netdb.h>
+#include <zephyr/posix/arpa/inet.h>
+#include <zephyr/random/random.h>
+#include <cJSON.h>
 
 #include "client_id.h"
 #include "message_channel.h"
 
-/* Register log module */
 LOG_MODULE_REGISTER(transport, CONFIG_MQTT_SAMPLE_TRANSPORT_LOG_LEVEL);
 
-/* Register subscriber */
 ZBUS_SUBSCRIBER_DEFINE(transport, CONFIG_MQTT_SAMPLE_TRANSPORT_MESSAGE_QUEUE_SIZE);
-
-/* ID for subscribe topic - Used to verify that a subscription succeeded in on_mqtt_suback(). */
-#define SUBSCRIBE_TOPIC_ID 2469
 
 /* Forward declarations */
 static const struct smf_state state[];
 static void connect_work_fn(struct k_work *work);
 
-/* Define connection work - Used to handle reconnection attempts to the MQTT broker */
 static K_WORK_DELAYABLE_DEFINE(connect_work, connect_work_fn);
 
-/* Define stack_area of application workqueue */
 K_THREAD_STACK_DEFINE(stack_area, CONFIG_MQTT_SAMPLE_TRANSPORT_WORKQUEUE_STACK_SIZE);
 
-/* Declare application workqueue. This workqueue is used to call mqtt_helper_connect(), and
- * schedule reconnectionn attempts upon network loss or disconnection from MQTT.
- */
 static struct k_work_q transport_queue;
 
 /* Internal states */
 enum module_state { MQTT_CONNECTED, MQTT_DISCONNECTED };
 
-/* MQTT client ID buffer */
+/* MQTT client and buffers */
+static struct mqtt_client client;
+static uint8_t rx_buffer[CONFIG_MQTT_SAMPLE_TRANSPORT_RX_TX_BUFFER_SIZE];
+static uint8_t tx_buffer[CONFIG_MQTT_SAMPLE_TRANSPORT_RX_TX_BUFFER_SIZE];
+
+/* Broker address */
+static struct sockaddr_storage broker_addr;
+
+/* TLS config */
+static sec_tag_t sec_tags[] = { CONFIG_MQTT_SAMPLE_TRANSPORT_SEC_TAG };
+
+/* Client ID */
 static char client_id[CONFIG_MQTT_SAMPLE_TRANSPORT_CLIENT_ID_BUFFER_SIZE];
 
-static uint8_t pub_topic[sizeof(client_id) + sizeof(CONFIG_MQTT_SAMPLE_TRANSPORT_PUBLISH_TOPIC)];
-static uint8_t sub_topic[sizeof(client_id) + sizeof(CONFIG_MQTT_SAMPLE_TRANSPORT_SUBSCRIBE_TOPIC)];
+/* Topics */
+static char state_topic[sizeof(client_id) + sizeof("/state")];
+static char cmd_topic[sizeof(client_id) + sizeof("/cmd")];
+static char status_topic[sizeof(client_id) + sizeof("/status")];
+
+/* LWT data — must be static since mqtt_client holds pointers */
+static struct mqtt_topic will_topic;
+static struct mqtt_utf8 will_message;
+static uint8_t will_payload[] = "offline";
+
+/* Username/password — static storage for mqtt_client pointers */
+static struct mqtt_utf8 username;
+static struct mqtt_utf8 password;
+
+/* Poll thread */
+static struct pollfd fds[1];
+static int nfds;
+static bool mqtt_connected;
+
+/* Buffer for incoming publish payload */
+static char cmd_payload_buf[256];
 
 enum transport_event_type {
 	CONNECTED,
@@ -55,7 +81,6 @@ struct transport_event {
 	enum transport_event_type type;
 };
 
-/* Private channel for internal events */
 ZBUS_CHAN_DEFINE(TRANSPORT_PRIVATE_CHANNEL,
 		 struct transport_event,
 		 NULL,
@@ -64,292 +89,470 @@ ZBUS_CHAN_DEFINE(TRANSPORT_PRIVATE_CHANNEL,
 		 ZBUS_MSG_INIT(0)
 );
 
-/* User defined state object.
- * Used to transfer data between state changes.
- */
 static struct s_object {
-	/* This must be first */
 	struct smf_ctx ctx;
-
-	/* Last channel type that a message was received on */
 	const struct zbus_channel *chan;
-
-	/* Network status */
 	enum network_status status;
-
-	/* Payload */
 	struct payload payload;
 } s_obj;
 
-/* Callback handlers from MQTT helper library.
- * The functions are called whenever specific MQTT packets are received from the broker, or
- * some library state has changed.
- */
-static void on_mqtt_connack(enum mqtt_conn_return_code return_code, bool session_present)
-{
-	ARG_UNUSED(return_code);
-	ARG_UNUSED(session_present);
-
-	int err;
-	struct transport_event event = {
-		.type = CONNECTED,
-	};
-
-	if (return_code != MQTT_CONNECTION_ACCEPTED) {
-		LOG_ERR("MQTT broker rejected connection, return code: %d", return_code);
-		return;
-	}
-
-	err = zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
-	if (err) {
-		LOG_ERR("zbus_chan_pub, error: %d", err);
-		SEND_FATAL_ERROR();
-	}
-}
-
-static void on_mqtt_disconnect(int result)
-{
-	int err;
-	struct transport_event event = {
-		.type = DISCONNECTED,
-	};
-
-	err = zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
-	if (err) {
-		LOG_ERR("zbus_chan_pub, error: %d", err);
-		SEND_FATAL_ERROR();
-	}
-}
-
-static void on_mqtt_publish(struct mqtt_helper_buf topic, struct mqtt_helper_buf payload)
-{
-	LOG_INF("Received payload: %.*s on topic: %.*s", payload.size,
-							 payload.ptr,
-							 topic.size,
-							 topic.ptr);
-}
-
-static void on_mqtt_suback(uint16_t message_id, int result)
-{
-	if ((message_id == SUBSCRIBE_TOPIC_ID) && (result == 0)) {
-		LOG_INF("Subscribed to topic %s", sub_topic);
-	} else if (result) {
-		LOG_ERR("Topic subscription failed, error: %d", result);
-	} else {
-		LOG_WRN("Subscribed to unknown topic, id: %d", message_id);
-	}
-}
-
-/* Local convenience functions */
-
-/* Function that prefixes topics with the Client ID. */
-static int topics_prefix(void)
+/* Build topics from client_id (IMEI) */
+static int topics_build(void)
 {
 	int len;
 
-	len = snprintk(pub_topic, sizeof(pub_topic), "%s/%s", client_id,
-		       CONFIG_MQTT_SAMPLE_TRANSPORT_PUBLISH_TOPIC);
-	if ((len < 0) || (len >= sizeof(pub_topic))) {
-		LOG_ERR("Publish topic buffer too small");
+	len = snprintk(state_topic, sizeof(state_topic), "%s/state", client_id);
+	if (len < 0 || len >= sizeof(state_topic)) {
 		return -EMSGSIZE;
 	}
 
-	len = snprintk(sub_topic, sizeof(sub_topic), "%s/%s", client_id,
-		       CONFIG_MQTT_SAMPLE_TRANSPORT_SUBSCRIBE_TOPIC);
-	if ((len < 0) || (len >= sizeof(sub_topic))) {
-		LOG_ERR("Subscribe topic buffer too small");
+	len = snprintk(cmd_topic, sizeof(cmd_topic), "%s/cmd", client_id);
+	if (len < 0 || len >= sizeof(cmd_topic)) {
+		return -EMSGSIZE;
+	}
+
+	len = snprintk(status_topic, sizeof(status_topic), "%s/status", client_id);
+	if (len < 0 || len >= sizeof(status_topic)) {
 		return -EMSGSIZE;
 	}
 
 	return 0;
 }
 
-static void publish(struct payload *payload)
+/* Serialize payload to JSON string, returns length or negative error */
+static int payload_to_json(const struct payload *p, char *buf, size_t buf_size)
 {
-	int err;
-
-	struct mqtt_publish_param param = {
-		.message.payload.data = payload->string,
-		.message.payload.len = strlen(payload->string),
-		.message.topic.qos = MQTT_QOS_1_AT_LEAST_ONCE,
-		.message_id = mqtt_helper_msg_id_get(),
-		.message.topic.topic.utf8 = pub_topic,
-		.message.topic.topic.size = strlen(pub_topic),
-	};
-
-	err = mqtt_helper_publish(&param);
-	if (err) {
-		LOG_WRN("Failed to send payload, err: %d", err);
-		return;
-	}
-
-	LOG_INF("Published message: \"%.*s\" on topic: \"%.*s\"", param.message.payload.len,
-								  param.message.payload.data,
-								  param.message.topic.topic.size,
-								  param.message.topic.topic.utf8);
+	return snprintk(buf, buf_size,
+		"{\"voltage\":%.2f,\"power_w\":%.1f,"
+		"\"relays\":[%s,%s,%s,%s,%s],\"ts\":%lld}",
+		(double)p->voltage, (double)p->power_w,
+		p->relays[0] ? "true" : "false",
+		p->relays[1] ? "true" : "false",
+		p->relays[2] ? "true" : "false",
+		p->relays[3] ? "true" : "false",
+		p->relays[4] ? "true" : "false",
+		p->ts);
 }
 
-static void subscribe(void)
+/* Publish a message on a given topic */
+static int mqtt_publish_msg(const char *topic, const uint8_t *data, size_t len,
+			    enum mqtt_qos qos, bool retain)
 {
-	int err;
+	struct mqtt_publish_param param = {
+		.message.topic.topic.utf8 = (uint8_t *)topic,
+		.message.topic.topic.size = strlen(topic),
+		.message.topic.qos = qos,
+		.message.payload.data = (uint8_t *)data,
+		.message.payload.len = len,
+		.message_id = (qos > MQTT_QOS_0_AT_MOST_ONCE) ? sys_rand32_get() : 0,
+		.retain_flag = retain ? 1 : 0,
+	};
 
+	int err = mqtt_publish(&client, &param);
+	if (err) {
+		LOG_WRN("mqtt_publish failed: %d", err);
+	} else {
+		LOG_INF("Published on %s: %.*s", topic, len, data);
+	}
+	return err;
+}
+
+/* Publish state payload as JSON */
+static void publish_state(struct payload *p)
+{
+	char json_buf[256];
+	int len = payload_to_json(p, json_buf, sizeof(json_buf));
+
+	if (len > 0 && len < sizeof(json_buf)) {
+		mqtt_publish_msg(state_topic, (uint8_t *)json_buf, len,
+				 MQTT_QOS_0_AT_MOST_ONCE, true);
+	}
+}
+
+/* Publish online status */
+static void publish_online(void)
+{
+	mqtt_publish_msg(status_topic, (uint8_t *)"online", 6,
+			 MQTT_QOS_1_AT_LEAST_ONCE, true);
+}
+
+/* Subscribe to command topic */
+static void subscribe_cmd(void)
+{
 	struct mqtt_topic topics[] = {
 		{
-			.topic.utf8 = sub_topic,
-			.topic.size = strlen(sub_topic),
+			.topic.utf8 = (uint8_t *)cmd_topic,
+			.topic.size = strlen(cmd_topic),
+			.qos = MQTT_QOS_1_AT_LEAST_ONCE,
 		},
 	};
 	struct mqtt_subscription_list list = {
 		.list = topics,
 		.list_count = ARRAY_SIZE(topics),
-		.message_id = SUBSCRIBE_TOPIC_ID,
+		.message_id = sys_rand32_get(),
 	};
 
-	for (size_t i = 0; i < list.list_count; i++) {
-		LOG_INF("Subscribing to: %s", (char *)list.list[i].topic.utf8);
-	}
-
-	err = mqtt_helper_subscribe(&list);
+	LOG_INF("Subscribing to: %s", cmd_topic);
+	int err = mqtt_subscribe(&client, &list);
 	if (err) {
-		LOG_ERR("Failed to subscribe to topics, error: %d", err);
-		return;
+		LOG_ERR("mqtt_subscribe failed: %d", err);
 	}
 }
 
-/* Connect work - Used to establish a connection to the MQTT broker and schedule reconnection
- * attempts.
- */
+/* Parse and dispatch incoming command */
+static void handle_command(const char *data, size_t len)
+{
+	cJSON *root = cJSON_ParseWithLength(data, len);
+	if (!root) {
+		LOG_WRN("Failed to parse command JSON");
+		return;
+	}
+
+	cJSON *action = cJSON_GetObjectItem(root, "action");
+	if (!cJSON_IsString(action)) {
+		LOG_WRN("Missing or invalid 'action' field");
+		cJSON_Delete(root);
+		return;
+	}
+
+	struct command cmd = { 0 };
+
+	if (strcmp(action->valuestring, "set_relay") == 0) {
+		cJSON *relay = cJSON_GetObjectItem(root, "relay");
+		cJSON *state = cJSON_GetObjectItem(root, "state");
+
+		if (!cJSON_IsNumber(relay) || !cJSON_IsBool(state)) {
+			LOG_WRN("Invalid set_relay command");
+			cJSON_Delete(root);
+			return;
+		}
+
+		cmd.action = CMD_SET_RELAY;
+		cmd.relay = relay->valueint - 1; /* 1-indexed to 0-indexed */
+		cmd.state = cJSON_IsTrue(state);
+
+	} else if (strcmp(action->valuestring, "start_stream") == 0) {
+		cmd.action = CMD_START_STREAM;
+
+	} else if (strcmp(action->valuestring, "stop_stream") == 0) {
+		cmd.action = CMD_STOP_STREAM;
+
+	} else {
+		LOG_WRN("Unknown action: %s", action->valuestring);
+		cJSON_Delete(root);
+		return;
+	}
+
+	cJSON_Delete(root);
+
+	int err = zbus_chan_pub(&CMD_CHAN, &cmd, K_SECONDS(1));
+	if (err) {
+		LOG_ERR("Failed to publish command: %d", err);
+	}
+}
+
+/* MQTT event handler */
+static void mqtt_evt_handler(struct mqtt_client *const cli,
+			     const struct mqtt_evt *evt)
+{
+	switch (evt->type) {
+	case MQTT_EVT_CONNACK: {
+		if (evt->result != 0) {
+			LOG_ERR("MQTT connect failed: %d", evt->result);
+			break;
+		}
+
+		struct transport_event event = { .type = CONNECTED };
+		zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
+		break;
+	}
+
+	case MQTT_EVT_DISCONNECT: {
+		struct transport_event event = { .type = DISCONNECTED };
+		zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
+		break;
+	}
+
+	case MQTT_EVT_PUBLISH: {
+		const struct mqtt_publish_param *pub = &evt->param.publish;
+		size_t payload_len = pub->message.payload.len;
+
+		if (payload_len >= sizeof(cmd_payload_buf)) {
+			LOG_WRN("Command payload too large: %zu", payload_len);
+			/* Read and discard */
+			mqtt_read_publish_payload_blocking(cli, cmd_payload_buf,
+							   sizeof(cmd_payload_buf) - 1);
+			break;
+		}
+
+		int bytes = mqtt_read_publish_payload_blocking(cli, cmd_payload_buf, payload_len);
+		if (bytes < 0) {
+			LOG_ERR("Failed to read publish payload: %d", bytes);
+			break;
+		}
+		cmd_payload_buf[bytes] = '\0';
+
+		LOG_INF("Received command: %s", cmd_payload_buf);
+		handle_command(cmd_payload_buf, bytes);
+
+		/* Send PUBACK for QoS 1 */
+		if (pub->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
+			struct mqtt_puback_param ack = {
+				.message_id = pub->message_id,
+			};
+			mqtt_publish_qos1_ack(cli, &ack);
+		}
+		break;
+	}
+
+	case MQTT_EVT_SUBACK:
+		LOG_INF("Subscription acknowledged, id: %d", evt->param.suback.message_id);
+		break;
+
+	case MQTT_EVT_PUBACK:
+		LOG_DBG("PUBACK id: %d", evt->param.puback.message_id);
+		break;
+
+	case MQTT_EVT_PINGRESP:
+		LOG_DBG("PINGRESP");
+		break;
+
+	default:
+		break;
+	}
+}
+
+/* Resolve broker hostname */
+static int broker_resolve(void)
+{
+	struct addrinfo *result;
+	struct addrinfo hints = {
+		.ai_family = AF_INET,
+		.ai_socktype = SOCK_STREAM,
+	};
+
+	int err = getaddrinfo(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME, NULL, &hints, &result);
+	if (err) {
+		LOG_ERR("getaddrinfo failed: %d", err);
+		return -EFAULT;
+	}
+
+	struct sockaddr_in *broker4 = (struct sockaddr_in *)&broker_addr;
+	broker4->sin_family = AF_INET;
+	broker4->sin_port = htons(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PORT);
+	broker4->sin_addr = ((struct sockaddr_in *)result->ai_addr)->sin_addr;
+
+	freeaddrinfo(result);
+
+	char addr_str[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &broker4->sin_addr, addr_str, sizeof(addr_str));
+	LOG_INF("Broker resolved: %s:%d", addr_str, CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PORT);
+
+	return 0;
+}
+
+/* Initialize and configure the MQTT client */
+static int mqtt_client_setup(void)
+{
+	mqtt_client_init(&client);
+
+	/* Broker address */
+	client.broker = &broker_addr;
+
+	/* Event handler */
+	client.evt_cb = mqtt_evt_handler;
+
+	/* Client ID */
+	client.client_id.utf8 = (uint8_t *)client_id;
+	client.client_id.size = strlen(client_id);
+
+	/* Username & password */
+	username.utf8 = (uint8_t *)CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME;
+	username.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME);
+	client.user_name = &username;
+
+	password.utf8 = (uint8_t *)CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD;
+	password.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD);
+	client.password = &password;
+
+	/* Buffers */
+	client.rx_buf = rx_buffer;
+	client.rx_buf_size = sizeof(rx_buffer);
+	client.tx_buf = tx_buffer;
+	client.tx_buf_size = sizeof(tx_buffer);
+
+	/* Protocol version */
+	client.protocol_version = MQTT_VERSION_3_1_1;
+
+	/* Clean session */
+	client.clean_session = IS_ENABLED(CONFIG_MQTT_CLEAN_SESSION) ? 1 : 0;
+
+	/* LWT */
+	will_topic.topic.utf8 = (uint8_t *)status_topic;
+	will_topic.topic.size = strlen(status_topic);
+	will_topic.qos = MQTT_QOS_1_AT_LEAST_ONCE;
+	client.will_topic = &will_topic;
+
+	will_message.utf8 = will_payload;
+	will_message.size = sizeof(will_payload) - 1;
+	client.will_message = &will_message;
+	client.will_retain = 1;
+
+	/* TLS */
+	client.transport.type = MQTT_TRANSPORT_SECURE;
+	struct mqtt_sec_config *tls = &client.transport.tls.config;
+	tls->peer_verify = TLS_PEER_VERIFY_NONE;
+	tls->sec_tag_list = sec_tags;
+	tls->sec_tag_count = ARRAY_SIZE(sec_tags);
+	tls->hostname = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME;
+
+	return 0;
+}
+
+static void prepare_fds(void)
+{
+	fds[0].fd = client.transport.tls.sock;
+	fds[0].events = POLLIN;
+	nfds = 1;
+}
+
+/* Poll loop for MQTT — runs in its own thread */
+static void mqtt_poll_loop(void)
+{
+	while (mqtt_connected) {
+		int timeout = mqtt_keepalive_time_left(&client);
+		int ret = poll(fds, nfds, (timeout > 0) ? timeout : 1000);
+
+		if (ret > 0 && (fds[0].revents & POLLIN)) {
+			mqtt_input(&client);
+		}
+
+		mqtt_live(&client);
+	}
+}
+
+static K_THREAD_STACK_DEFINE(poll_stack, 2048);
+static struct k_thread poll_thread;
+
+static void poll_thread_fn(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	mqtt_poll_loop();
+}
+
+/* Connect work */
 static void connect_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	int err;
-	struct mqtt_helper_conn_params conn_params = {
-		.hostname.ptr = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME,
-		.hostname.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME),
-		.device_id.ptr = client_id,
-		.device_id.size = strlen(client_id),
-#if defined(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME)
-		.user_name.ptr = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME,
-		.user_name.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME),
-#endif
-#if defined(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD)
-		.password.ptr = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD,
-		.password.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD),
-#endif
-	};
-
-	err = client_id_get(client_id, sizeof(client_id));
+	int err = client_id_get(client_id, sizeof(client_id));
 	if (err) {
-		LOG_ERR("client_id_get, error: %d", err);
+		LOG_ERR("client_id_get failed: %d", err);
 		SEND_FATAL_ERROR();
 		return;
 	}
 
-	err = topics_prefix();
+	err = topics_build();
 	if (err) {
-		LOG_ERR("topics_prefix, error: %d", err);
+		LOG_ERR("topics_build failed: %d", err);
 		SEND_FATAL_ERROR();
 		return;
 	}
 
-	err = mqtt_helper_connect(&conn_params);
+	err = broker_resolve();
 	if (err) {
-		LOG_ERR("Failed connecting to MQTT, error code: %d", err);
+		LOG_ERR("broker_resolve failed: %d", err);
+		k_work_reschedule_for_queue(&transport_queue, &connect_work,
+			K_SECONDS(CONFIG_MQTT_SAMPLE_TRANSPORT_RECONNECTION_TIMEOUT_SECONDS));
+		return;
 	}
 
-	k_work_reschedule_for_queue(&transport_queue, &connect_work,
-			  K_SECONDS(CONFIG_MQTT_SAMPLE_TRANSPORT_RECONNECTION_TIMEOUT_SECONDS));
+	mqtt_client_setup();
+
+	err = mqtt_connect(&client);
+	if (err) {
+		LOG_ERR("mqtt_connect failed: %d", err);
+		k_work_reschedule_for_queue(&transport_queue, &connect_work,
+			K_SECONDS(CONFIG_MQTT_SAMPLE_TRANSPORT_RECONNECTION_TIMEOUT_SECONDS));
+		return;
+	}
+
+	/* Start poll thread */
+	mqtt_connected = true;
+	prepare_fds();
+	k_thread_create(&poll_thread, poll_stack, K_THREAD_STACK_SIZEOF(poll_stack),
+			poll_thread_fn, NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 }
 
-/* Zephyr State Machine framework handlers */
+/* SMF state handlers */
 
-/* Function executed when the module enters the disconnected state. */
 static void disconnected_entry(void *o)
 {
 	struct s_object *user_object = o;
 
-	/* Reschedule a connection attempt if we are connected to network and we enter the
-	 * disconnected state.
-	 */
+	mqtt_connected = false;
+	nfds = 0;
+
 	if (user_object->status == NETWORK_CONNECTED) {
 		k_work_reschedule_for_queue(&transport_queue, &connect_work, K_NO_WAIT);
 	}
 }
 
-/* Function executed when the module is in the disconnected state. */
 static enum smf_state_result disconnected_run(void *o)
 {
 	struct s_object *user_object = o;
 
 	if ((user_object->status == NETWORK_DISCONNECTED) && (user_object->chan == &NETWORK_CHAN)) {
-		/* If NETWORK_DISCONNECTED is received after the MQTT connection is closed,
-		 * we cancel the connect work if it is onging.
-		 */
 		k_work_cancel_delayable(&connect_work);
 	}
 
 	if ((user_object->status == NETWORK_CONNECTED) && (user_object->chan == &NETWORK_CHAN)) {
-
-		/* Wait for 5 seconds to ensure that the network stack is ready before
-		 * attempting to connect to MQTT. This delay is only needed when building for
-		 * Wi-Fi.
-		 */
 		k_work_reschedule_for_queue(&transport_queue, &connect_work, K_SECONDS(5));
 	}
 
 	return SMF_EVENT_HANDLED;
 }
 
-/* Function executed when the module enters the connected state. */
 static void connected_entry(void *o)
 {
+	ARG_UNUSED(o);
+
 	LOG_INF("Connected to MQTT broker");
 	LOG_INF("Hostname: %s", CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME);
 	LOG_INF("Client ID: %s", client_id);
-	LOG_INF("Port: %d", CONFIG_MQTT_HELPER_PORT);
-	LOG_INF("TLS: %s", IS_ENABLED(CONFIG_MQTT_LIB_TLS) ? "Yes" : "No");
 
-	ARG_UNUSED(o);
-
-	/* Cancel any ongoing connect work when we enter connected state */
 	k_work_cancel_delayable(&connect_work);
 
-	subscribe();
+	subscribe_cmd();
+	publish_online();
 }
 
-/* Function executed when the module is in the connected state. */
 static enum smf_state_result connected_run(void *o)
 {
 	struct s_object *user_object = o;
 
 	if ((user_object->status == NETWORK_DISCONNECTED) && (user_object->chan == &NETWORK_CHAN)) {
-		/* Explicitly disconnect the MQTT transport when losing network connectivity.
-		 * This is to cleanup any internal library state.
-		 * The call to this function will cause on_mqtt_disconnect() to be called.
-		 */
-		(void)mqtt_helper_disconnect();
+		mqtt_connected = false;
+		mqtt_disconnect(&client, NULL);
 		return SMF_EVENT_HANDLED;
 	}
 
-	if (user_object->chan != &PAYLOAD_CHAN) {
-		return SMF_EVENT_HANDLED;
+	if (user_object->chan == &PAYLOAD_CHAN) {
+		publish_state(&user_object->payload);
 	}
-
-	publish(&user_object->payload);
 
 	return SMF_EVENT_HANDLED;
 }
 
-/* Function executed when the module exits the connected state. */
 static void connected_exit(void *o)
 {
 	ARG_UNUSED(o);
-
 	LOG_INF("Disconnected from MQTT broker");
 }
 
-/* Construct state table */
 static const struct smf_state state[] = {
 	[MQTT_DISCONNECTED] = SMF_CREATE_STATE(disconnected_entry, disconnected_run, NULL,
 					       NULL, NULL),
@@ -363,33 +566,12 @@ static void transport_task(void)
 	const struct zbus_channel *chan;
 	enum network_status status;
 	struct payload payload;
-	struct mqtt_helper_cfg cfg = {
-		.cb = {
-			.on_connack = on_mqtt_connack,
-			.on_disconnect = on_mqtt_disconnect,
-			.on_publish = on_mqtt_publish,
-			.on_suback = on_mqtt_suback,
-		},
-	};
 
-	/* Initialize and start application workqueue.
-	 * This workqueue can be used to offload tasks and/or as a timer when wanting to
-	 * schedule functionality using the 'k_work' API.
-	 */
 	k_work_queue_init(&transport_queue);
 	k_work_queue_start(&transport_queue, stack_area,
 			   K_THREAD_STACK_SIZEOF(stack_area),
-			   K_HIGHEST_APPLICATION_THREAD_PRIO,
-			   NULL);
+			   K_HIGHEST_APPLICATION_THREAD_PRIO, NULL);
 
-	err = mqtt_helper_init(&cfg);
-	if (err) {
-		LOG_ERR("mqtt_helper_init, error: %d", err);
-		SEND_FATAL_ERROR();
-		return;
-	}
-
-	/* Set initial state */
 	smf_set_initial(SMF_CTX(&s_obj), &state[MQTT_DISCONNECTED]);
 
 	while (!zbus_sub_wait(&transport, &chan, K_FOREVER)) {
@@ -397,64 +579,42 @@ static void transport_task(void)
 		s_obj.chan = chan;
 
 		if (&NETWORK_CHAN == chan) {
-
 			err = zbus_chan_read(&NETWORK_CHAN, &status, K_SECONDS(1));
 			if (err) {
-				LOG_ERR("zbus_chan_read, error: %d", err);
+				LOG_ERR("zbus_chan_read error: %d", err);
 				SEND_FATAL_ERROR();
 				return;
 			}
-
 			s_obj.status = status;
-
-			err = smf_run_state(SMF_CTX(&s_obj));
-			if (err) {
-				LOG_ERR("smf_run_state, error: %d", err);
-				SEND_FATAL_ERROR();
-				return;
-			}
+			smf_run_state(SMF_CTX(&s_obj));
 		}
 
 		if (&PAYLOAD_CHAN == chan) {
-
 			err = zbus_chan_read(&PAYLOAD_CHAN, &payload, K_SECONDS(1));
 			if (err) {
-				LOG_ERR("zbus_chan_read, error: %d", err);
+				LOG_ERR("zbus_chan_read error: %d", err);
 				SEND_FATAL_ERROR();
 				return;
 			}
-
 			s_obj.payload = payload;
-
-			err = smf_run_state(SMF_CTX(&s_obj));
-			if (err) {
-				LOG_ERR("smf_run_state, error: %d", err);
-				SEND_FATAL_ERROR();
-				return;
-			}
+			smf_run_state(SMF_CTX(&s_obj));
 		}
 
 		if (&TRANSPORT_PRIVATE_CHANNEL == chan) {
-
 			struct transport_event event;
-
 			err = zbus_chan_read(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
 			if (err) {
-				LOG_ERR("zbus_chan_read, error: %d", err);
+				LOG_ERR("zbus_chan_read error: %d", err);
 				SEND_FATAL_ERROR();
 				return;
 			}
 
-			/* Process MQTT events and change state in the correct thread context */
 			switch (event.type) {
 			case CONNECTED:
 				smf_set_state(SMF_CTX(&s_obj), &state[MQTT_CONNECTED]);
 				break;
 			case DISCONNECTED:
 				smf_set_state(SMF_CTX(&s_obj), &state[MQTT_DISCONNECTED]);
-				break;
-			default:
-				LOG_WRN("Unknown MQTT event type: %d", event.type);
 				break;
 			}
 		}

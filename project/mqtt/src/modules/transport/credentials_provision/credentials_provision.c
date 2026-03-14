@@ -31,40 +31,12 @@ static const unsigned char private_key[] = {
 #endif
 };
 
-#if CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG != -1
-
-static const unsigned char ca_certificate_2[] = {
-#if __has_include("ca-cert-2.pem")
-#include "ca-cert-2.pem"
-#else
-""
-#endif
-};
-
-static const unsigned char private_key_2[] = {
-#if __has_include("private-key-2.pem")
-#include "private-key-2.pem"
-#else
-""
-#endif
-};
-
-static const unsigned char device_certificate_2[] = {
-#if __has_include("client-cert-2.pem")
-#include "client-cert-2.pem"
-#else
-""
-#endif
-};
-
-#endif /* CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG != -1 */
-
 static int credentials_provision(void)
 {
 	int err = 0;
 
 	if (sizeof(ca_certificate) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SEC_TAG,
+		err = modem_key_mgmt_write(CONFIG_MQTT_SAMPLE_TRANSPORT_SEC_TAG,
 					   MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
 					   ca_certificate,
 					   sizeof(ca_certificate) - 1);
@@ -74,7 +46,7 @@ static int credentials_provision(void)
 	}
 
 	if (sizeof(device_certificate) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SEC_TAG,
+		err = modem_key_mgmt_write(CONFIG_MQTT_SAMPLE_TRANSPORT_SEC_TAG,
 					   MODEM_KEY_MGMT_CRED_TYPE_PUBLIC_CERT,
 					   device_certificate,
 					   sizeof(device_certificate) - 1);
@@ -84,7 +56,7 @@ static int credentials_provision(void)
 	}
 
 	if (sizeof(private_key) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SEC_TAG,
+		err = modem_key_mgmt_write(CONFIG_MQTT_SAMPLE_TRANSPORT_SEC_TAG,
 					   MODEM_KEY_MGMT_CRED_TYPE_PRIVATE_CERT,
 					   private_key,
 					   sizeof(private_key) - 1);
@@ -92,42 +64,6 @@ static int credentials_provision(void)
 			return err;
 		}
 	}
-
-	/* Secondary security tag entries. */
-
-#if CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG != -1
-
-	if (sizeof(ca_certificate_2) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG,
-					   MODEM_KEY_MGMT_CRED_TYPE_CA_CHAIN,
-					   ca_certificate_2,
-					   sizeof(ca_certificate_2) - 1);
-		if (err) {
-			return err;
-		}
-	}
-
-	if (sizeof(device_certificate_2) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG,
-					   MODEM_KEY_MGMT_CRED_TYPE_PUBLIC_CERT,
-					   device_certificate_2,
-					   sizeof(device_certificate_2) - 1);
-		if (err) {
-			return err;
-		}
-	}
-
-	if (sizeof(private_key_2) > 1) {
-		err = modem_key_mgmt_write(CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG,
-					   MODEM_KEY_MGMT_CRED_TYPE_PRIVATE_CERT,
-					   private_key_2,
-					   sizeof(private_key_2) - 1);
-		if (err) {
-			return err;
-		}
-	}
-
-#endif /* CONFIG_MQTT_HELPER_SECONDARY_SEC_TAG != -1 */
 
 	return err;
 }

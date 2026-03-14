@@ -8,11 +8,15 @@ menu "Trigger"
 
 config MQTT_SAMPLE_TRIGGER_THREAD_STACK_SIZE
 	int "Thread stack size"
-	default 512
+	default 1024
 
-config MQTT_SAMPLE_TRIGGER_TIMEOUT_SECONDS
-	int "Trigger timer timeout"
-	default 60
+config MQTT_SAMPLE_TRIGGER_STREAM_INTERVAL_SECONDS
+	int "Streaming mode publish interval"
+	default 30
+
+config MQTT_SAMPLE_TRIGGER_STREAM_TIMEOUT_SECONDS
+	int "Streaming mode auto-stop timeout"
+	default 300
 
 module = MQTT_SAMPLE_TRIGGER
 module-str = Trigger

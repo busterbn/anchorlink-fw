@@ -15,9 +15,6 @@
 extern "C" {
 #endif
 
-/** @brief Macro used to send a message on the FATAL_ERROR_CHANNEL.
- *	   The message will be handled in the error module.
- */
 #define SEND_FATAL_ERROR()									\
 	int not_used = -1;									\
 	if (zbus_chan_pub(&FATAL_ERROR_CHAN, &not_used, K_SECONDS(10))) {			\
@@ -27,7 +24,10 @@ extern "C" {
 	}
 
 struct payload {
-	char string[CONFIG_MQTT_SAMPLE_PAYLOAD_CHANNEL_STRING_MAX_SIZE];
+	float voltage;
+	float power_w;
+	bool relays[5];
+	int64_t ts;
 };
 
 enum network_status {
@@ -35,7 +35,19 @@ enum network_status {
 	NETWORK_CONNECTED,
 };
 
-ZBUS_CHAN_DECLARE(TRIGGER_CHAN, PAYLOAD_CHAN, NETWORK_CHAN, FATAL_ERROR_CHAN);
+enum cmd_action {
+	CMD_SET_RELAY,
+	CMD_START_STREAM,
+	CMD_STOP_STREAM,
+};
+
+struct command {
+	enum cmd_action action;
+	uint8_t relay;  /* 0-4 internal index */
+	bool state;
+};
+
+ZBUS_CHAN_DECLARE(TRIGGER_CHAN, PAYLOAD_CHAN, NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN);
 
 #ifdef __cplusplus
 }
