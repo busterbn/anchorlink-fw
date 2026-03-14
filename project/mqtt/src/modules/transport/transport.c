@@ -229,6 +229,14 @@ static void connect_work_fn(struct k_work *work)
 		.hostname.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME),
 		.device_id.ptr = client_id,
 		.device_id.size = strlen(client_id),
+#if defined(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME)
+		.user_name.ptr = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME,
+		.user_name.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME),
+#endif
+#if defined(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD)
+		.password.ptr = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD,
+		.password.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD),
+#endif
 	};
 
 	err = client_id_get(client_id, sizeof(client_id));
