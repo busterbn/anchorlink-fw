@@ -1,8 +1,0 @@
-# SeaHub V1 board configuration
-
-# Copyright (c) 2016-2025 Makerdiary <https://makerdiary.com>
-# SPDX-License-Identifier: Apache-2.0
-
-config BOARD_SEAHUB_V1
-	select SOC_NRF52820_QDAA if BOARD_SEAHUB_V1_NRF52820
-	select SOC_NRF9151_LACA if BOARD_SEAHUB_V1_NRF9151 || BOARD_SEAHUB_V1_NRF9151_NS

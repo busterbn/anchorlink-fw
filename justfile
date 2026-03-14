@@ -6,8 +6,8 @@ set dotenv-load := true
 
 
 
-export APP := env_var_or_default("APP", "project/app")
-export BOARD := env_var_or_default("BOARD", "seahub_v1/nrf9151/cpuapp")
+export APP := env_var_or_default("APP", "project/mqtt")
+export BOARD := env_var_or_default("BOARD", "nrf9151_connectkit/nrf9151/ns")
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "MinSizeRel") # Set to 'Release' for release builds
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Debug") # Set to 'Release' for release builds
 export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Release") # Set to 'Release' for release builds
@@ -38,9 +38,16 @@ menuconfig:
 clean:
     rm -rf .cache build compile_commands.json
 
+# # Flash from within the docker image
+# flash *args:
+#     just west flash -d {{BUILD_DIR}} -r {{ WEST_RUNNER }} {{ WEST_RUNNER_ARGS }} "$@"
+
 # Flash from within the docker image
-flash *args:
-    just west flash -d {{BUILD_DIR}} -r {{ WEST_RUNNER }} {{ WEST_RUNNER_ARGS }} "$@"
+flash:
+    pyocd load --target nrf91 --frequency 4000000 build/{{BOARD}}/merged.hex
+
+reset:
+    pyocd reset --target nrf91
 
 # Run a debugserver and RTT logging
 run:
@@ -74,7 +81,7 @@ init:
     if [ -z "$VIRTUAL_ENV" ]; then
         python -m venv --system-site-packages .venv
         . .venv/bin/activate
-        pip install west
+        pip install west jsonschema
     fi
 
     [ -e .west ] || west init -l project
