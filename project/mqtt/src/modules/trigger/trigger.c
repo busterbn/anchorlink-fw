@@ -17,14 +17,22 @@ ZBUS_SUBSCRIBER_DEFINE(trigger, 4);
 
 static bool streaming;
 
+/* Work items — timer callbacks run in ISR, so defer zbus publish to work queue */
+static void send_trigger_work_fn(struct k_work *work);
+static void stream_timeout_work_fn(struct k_work *work);
+
+static K_WORK_DEFINE(send_trigger_work, send_trigger_work_fn);
+static K_WORK_DEFINE(stream_timeout_work, stream_timeout_work_fn);
+
 static void stream_timer_fn(struct k_timer *timer);
 static void stream_timeout_fn(struct k_timer *timer);
 
 static K_TIMER_DEFINE(stream_timer, stream_timer_fn, NULL);
 static K_TIMER_DEFINE(stream_timeout, stream_timeout_fn, NULL);
 
-static void send_trigger(void)
+static void send_trigger_work_fn(struct k_work *work)
 {
+	ARG_UNUSED(work);
 	int not_used = 0;
 	int err = zbus_chan_pub(&TRIGGER_CHAN, &not_used, K_SECONDS(1));
 
@@ -36,15 +44,21 @@ static void send_trigger(void)
 static void stream_timer_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	send_trigger();
+	k_work_submit(&send_trigger_work);
+}
+
+static void stream_timeout_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	LOG_INF("Stream timeout — returning to idle mode");
+	streaming = false;
+	k_timer_stop(&stream_timer);
 }
 
 static void stream_timeout_fn(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
-	LOG_INF("Stream timeout — returning to idle mode");
-	streaming = false;
-	k_timer_stop(&stream_timer);
+	k_work_submit(&stream_timeout_work);
 }
 
 static void start_streaming(void)
@@ -52,18 +66,16 @@ static void start_streaming(void)
 	LOG_INF("Starting streaming mode");
 	streaming = true;
 
-	/* Start/restart the 30s periodic trigger */
 	k_timer_start(&stream_timer,
 		       K_SECONDS(CONFIG_MQTT_SAMPLE_TRIGGER_STREAM_INTERVAL_SECONDS),
 		       K_SECONDS(CONFIG_MQTT_SAMPLE_TRIGGER_STREAM_INTERVAL_SECONDS));
 
-	/* Reset the 5-min timeout */
 	k_timer_start(&stream_timeout,
 		       K_SECONDS(CONFIG_MQTT_SAMPLE_TRIGGER_STREAM_TIMEOUT_SECONDS),
 		       K_NO_WAIT);
 
-	/* Publish state immediately when streaming starts */
-	send_trigger();
+	/* Publish state immediately */
+	k_work_submit(&send_trigger_work);
 }
 
 static void stop_streaming(void)
