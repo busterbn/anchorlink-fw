@@ -1,0 +1,33 @@
+# Copyright (c) 2025, My Company
+# SPDX-License-Identifier: Apache-2.0
+
+description: TI LP5817 3-Channel I2C RGB LED Driver
+
+compatible: "ti,lp5817"
+
+include: [i2c-device.yaml, led-controller.yaml]
+
+properties:
+  max-current-ma:
+    type: int
+    required: false
+    default: 25
+    description: |
+      Sets the maximum output current for all channels.
+      The LP5817 supports two ranges:
+      - 25: For the 25.5mA range
+      - 51: For the 51mA range
+
+child-binding:
+  description: LP5817 child LED node
+  properties:
+    label:
+      type: string
+      required: true
+      description: The user-visible name for this LED.
+    color:
+      type: int
+      required: false
+      description: |
+        The color of the LED, from the list of predefined LED_COLOR_ID_*
+        values in <dt-bindings/led/led.h>.

@@ -1,0 +1,25 @@
+/deps
+/.cache
+/.vscode
+.DS_Store
+.env
+
+*.swp
+*~
+
+# python
+.venv
+
+# build
+/project/build*
+build/
+artifacts
+
+__pycache__/
+/compile_commands.json
+/.west/
+.gdb_history
+
+# Auto-generated files
+/project/app/src/network/provisioning_ui_html.h
+notebooks/

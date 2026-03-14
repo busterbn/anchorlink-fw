@@ -1,0 +1,7 @@
+/deps
+/.venv
+/build
+/release
+/.cache
+/.west
+/.venv

@@ -1,0 +1,10 @@
+# Copyright (c) 2025, My Company
+# SPDX-License-Identifier: Apache-2.0
+
+config LED_LP5817
+	bool "TI LP5817 LED driver"
+	default y
+	depends on I2C
+	select LED_TRIGGER
+	help
+	  Enable the driver for the TI LP5817 3-channel I2C LED driver.
