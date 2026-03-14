@@ -3,6 +3,7 @@
 #include <zephyr/zbus/zbus.h>
 
 #include "message_channel.h"
+#include "relays.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -15,6 +16,24 @@ int main(void)
 	enum network_status status;
 
 	LOG_INF("Hello world!");
+
+	relays_init();
+
+	/* Test: cycle through each relay */
+	for (int i = 0; i < NUM_RELAYS; i++) {
+		LOG_INF("Relay %d ON", i);
+		relay_set(i, true);
+		k_sleep(K_SECONDS(2));
+		LOG_INF("Relay %d OFF", i);
+		relay_set(i, false);
+		k_sleep(K_SECONDS(1));
+	}
+
+	LOG_INF("All relays ON");
+	relays_set_all(0x1F);
+	k_sleep(K_SECONDS(3));
+	LOG_INF("All relays OFF");
+	relays_set_all(0x00);
 
 	/* Wait for network connected event */
 	while (!zbus_sub_wait(&main_sub, &chan, K_FOREVER)) {

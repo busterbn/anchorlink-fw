@@ -25,11 +25,40 @@
 		};
 	};
 
+	relays {
+		compatible = "gpio-leds";
+		relay0: relay_0 {
+			gpios = <&gpio0 1 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+			label = "Relay 0";
+		};
+		relay1: relay_1 {
+			gpios = <&gpio0 2 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+			label = "Relay 1";
+		};
+		relay2: relay_2 {
+			gpios = <&gpio0 3 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+			label = "Relay 2";
+		};
+		relay3: relay_3 {
+			gpios = <&gpio0 4 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+			label = "Relay 3";
+		};
+		relay4: relay_4 {
+			gpios = <&gpio0 5 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP)>;
+			label = "Relay 4";
+		};
+	};
+
 	/* These aliases are provided for compatibility with samples */
 	aliases {
 		sw0 = &button0;
 		mcuboot-button0 = &button0;
 		watchdog0 = &wdt0;
+		relay0 = &relay0;
+		relay1 = &relay1;
+		relay2 = &relay2;
+		relay3 = &relay3;
+		relay4 = &relay4;
 	};
 };
 
