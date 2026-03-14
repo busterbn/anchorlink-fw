@@ -4,6 +4,7 @@
 
 #include "message_channel.h"
 #include "relays.h"
+#include "power.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -18,6 +19,20 @@ int main(void)
 	LOG_INF("Hello world!");
 
 	relays_init();
+	power_init();
+
+	/* Test: read ADC channels */
+	int32_t battery_mv, current_mv;
+
+	for (int i = 0; i < 5; i++) {
+		if (!power_read_battery_mv(&battery_mv)) {
+			LOG_INF("Battery: %d mV", battery_mv);
+		}
+		if (!power_read_current_ma(&current_mv)) {
+			LOG_INF("Current sense: %d mV", current_mv);
+		}
+		k_sleep(K_SECONDS(2));
+	}
 
 	/* Test: cycle through each relay */
 	for (int i = 0; i < NUM_RELAYS; i++) {

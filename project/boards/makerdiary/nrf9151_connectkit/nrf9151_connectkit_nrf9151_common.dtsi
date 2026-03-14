@@ -5,6 +5,8 @@
  */
 #include "nrf9151_connectkit_nrf9151_common-pinctrl.dtsi"
 #include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
 
 / {
 	model = "Makerdiary nRF9151 Connect Kit nRF9151";
@@ -49,6 +51,10 @@
 		};
 	};
 
+	zephyr,user {
+		io-channels = <&adc 0>, <&adc 1>;
+	};
+
 	/* These aliases are provided for compatibility with samples */
 	aliases {
 		sw0 = &button0;
@@ -64,6 +70,26 @@
 
 &adc {
 	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN0>;
+		zephyr,resolution = <12>;
+	};
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN1>;
+		zephyr,resolution = <12>;
+	};
 };
 
 &gpiote {
