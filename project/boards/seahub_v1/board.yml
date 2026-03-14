@@ -1,0 +1,8 @@
+board:
+  name: seahub_v1
+  vendor: makerdiary
+  socs:
+    - name: nrf52820
+    - name: nrf9151
+      variants:
+        - name: 'ns'

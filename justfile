@@ -7,7 +7,7 @@ set dotenv-load := true
 
 
 export APP := env_var_or_default("APP", "project/app")
-export BOARD := env_var_or_default("BOARD", "C7/nrf5340/cpuapp")
+export BOARD := env_var_or_default("BOARD", "seahub_v1/nrf9151/cpuapp")
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "MinSizeRel") # Set to 'Release' for release builds
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Debug") # Set to 'Release' for release builds
 export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Release") # Set to 'Release' for release builds
@@ -58,10 +58,6 @@ debug *args:
 rtt:
     just west rtt -r {{WEST_RUNNER}} {{WEST_RUNNER_ARGS}}
 
-apply_patches:
-    # ./patches/apply_patches.sh
-    cp patches/common.options deps/nrf/subsys/net/lib/softap_wifi_provision/proto/common.options
-
 provision *args:
     .venv/bin/python3 scripts/cred_import.py "$@"
 
@@ -88,7 +84,6 @@ init:
 
     west config build.pristine auto
     west config build.guess-dir runners
-    just apply_patches
 
 ci-build:
 	mkdir -p build
