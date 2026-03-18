@@ -16,6 +16,8 @@
 #include <zephyr/random/random.h>
 #include <cJSON.h>
 
+#include <zephyr/shell/shell.h>
+
 #include "client_id.h"
 #include "message_channel.h"
 
@@ -71,6 +73,61 @@ static bool mqtt_connected;
 
 /* Buffer for incoming publish payload */
 static char cmd_payload_buf[256];
+
+/*
+ * Data usage tracking.
+ *
+ * MQTT packet overhead (bytes per message, excluding TLS):
+ *   PUBLISH:   2 + topic_len + 2 (topic length field) + payload_len
+ *              + 2 (packet id, QoS 1+)
+ *   PINGREQ:   2
+ *   PINGRESP:  2
+ *   PUBACK:    4
+ *   SUBACK:    4-5
+ *   SUBSCRIBE: 2 + 2 + topic_len + 2 + 1
+ *
+ * We track: app payload bytes, estimated MQTT framing, and keepalive pings.
+ */
+static uint32_t app_tx;
+static uint32_t app_rx;
+static uint32_t mqtt_overhead_tx;
+static uint32_t mqtt_overhead_rx;
+static uint32_t ping_count;
+
+static int cmd_data_stats(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t total_tx = app_tx + mqtt_overhead_tx;
+	uint32_t total_rx = app_rx + mqtt_overhead_rx;
+
+	shell_print(sh, "--- Data usage since last reset ---");
+	shell_print(sh, "App payload:    TX %u bytes  RX %u bytes", app_tx, app_rx);
+	shell_print(sh, "MQTT overhead:  TX %u bytes  RX %u bytes", mqtt_overhead_tx, mqtt_overhead_rx);
+	shell_print(sh, "MQTT total:     TX %u bytes  RX %u bytes", total_tx, total_rx);
+	shell_print(sh, "Keepalives:     %u pings (%u bytes TX + %u bytes RX)",
+		    ping_count, ping_count * 2, ping_count * 2);
+
+	return 0;
+}
+
+static int cmd_data_reset(const struct shell *sh, size_t argc, char **argv)
+{
+	app_tx = 0;
+	app_rx = 0;
+	mqtt_overhead_tx = 0;
+	mqtt_overhead_rx = 0;
+	ping_count = 0;
+
+	shell_print(sh, "Counters reset");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(data_cmds,
+	SHELL_CMD(stats, NULL, "Show data usage since last reset", cmd_data_stats),
+	SHELL_CMD(reset, NULL, "Reset data usage counters", cmd_data_reset),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(data, &data_cmds, "Data usage commands", NULL);
 
 enum transport_event_type {
 	CONNECTED,
@@ -162,7 +219,10 @@ static int mqtt_publish_msg(const char *topic, const uint8_t *data, size_t len,
 	if (err) {
 		LOG_WRN("mqtt_publish failed: %d", err);
 	} else {
-		LOG_INF("Published on %s: %.*s", topic, len, data);
+		app_tx += len;
+		/* MQTT PUBLISH overhead: 2 fixed header + 2 topic len + topic + (2 pkt id if qos>0) */
+		mqtt_overhead_tx += 2 + 2 + strlen(topic) + (qos > MQTT_QOS_0_AT_MOST_ONCE ? 2 : 0);
+		LOG_INF("Published on %s (%u bytes)", topic, len);
 	}
 	return err;
 }
@@ -206,6 +266,9 @@ static void subscribe_cmd(void)
 	int err = mqtt_subscribe(&client, &list);
 	if (err) {
 		LOG_ERR("mqtt_subscribe failed: %d", err);
+	} else {
+		/* SUBSCRIBE: 2 fixed + 2 msg id + 2 topic len + topic + 1 qos */
+		mqtt_overhead_tx += 2 + 2 + 2 + strlen(cmd_topic) + 1;
 	}
 }
 
@@ -302,7 +365,11 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 		}
 		cmd_payload_buf[bytes] = '\0';
 
-		LOG_INF("Received command: %s", cmd_payload_buf);
+		app_rx += bytes;
+		/* MQTT PUBLISH overhead: 2 fixed + 2 topic len + topic + (2 pkt id if qos>0) */
+		mqtt_overhead_rx += 2 + 2 + pub->message.topic.topic.size
+			+ (pub->message.topic.qos > MQTT_QOS_0_AT_MOST_ONCE ? 2 : 0);
+		LOG_INF("Received command (%d bytes): %s", bytes, cmd_payload_buf);
 		handle_command(cmd_payload_buf, bytes);
 
 		/* Send PUBACK for QoS 1 */
@@ -316,14 +383,19 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 	}
 
 	case MQTT_EVT_SUBACK:
+		mqtt_overhead_rx += 5; /* SUBACK: 2 fixed + 2 msg id + 1 return code */
 		LOG_INF("Subscription acknowledged, id: %d", evt->param.suback.message_id);
 		break;
 
 	case MQTT_EVT_PUBACK:
+		mqtt_overhead_rx += 4; /* PUBACK: 2 fixed + 2 msg id */
 		LOG_DBG("PUBACK id: %d", evt->param.puback.message_id);
 		break;
 
 	case MQTT_EVT_PINGRESP:
+		ping_count++;
+		mqtt_overhead_tx += 2; /* PINGREQ */
+		mqtt_overhead_rx += 2; /* PINGRESP */
 		LOG_DBG("PINGRESP");
 		break;
 
