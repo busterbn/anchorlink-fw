@@ -6,7 +6,7 @@ set dotenv-load := true
 
 
 
-export APP := env_var_or_default("APP", "project/mqtt")
+export APP := env_var_or_default("APP", "project/app")
 export BOARD := env_var_or_default("BOARD", "nrf9151_connectkit/nrf9151/ns")
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "MinSizeRel") # Set to 'Release' for release builds
 # export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Debug") # Set to 'Release' for release builds
@@ -81,6 +81,7 @@ init:
     if [ -z "$VIRTUAL_ENV" ]; then
         python -m venv --system-site-packages .venv
         . .venv/bin/activate
+        pip install --upgrade pip
         pip install west jsonschema
     fi
 
