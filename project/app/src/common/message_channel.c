@@ -10,22 +10,6 @@
 
 #include "message_channel.h"
 
-ZBUS_CHAN_DEFINE(TRIGGER_CHAN,
-		 int,
-		 NULL,
-		 NULL,
-		 ZBUS_OBSERVERS(sampler),
-		 ZBUS_MSG_INIT(0)
-);
-
-ZBUS_CHAN_DEFINE(PAYLOAD_CHAN,
-		 struct payload,
-		 NULL,
-		 NULL,
-		 ZBUS_OBSERVERS(transport),
-		 ZBUS_MSG_INIT(0)
-);
-
 ZBUS_CHAN_DEFINE(NETWORK_CHAN,
 		 enum network_status,
 		 NULL,
@@ -46,6 +30,14 @@ ZBUS_CHAN_DEFINE(CMD_CHAN,
 		 struct command,
 		 NULL,
 		 NULL,
-		 ZBUS_OBSERVERS(main_sub, trigger),
+		 ZBUS_OBSERVERS(main_sub),
+		 ZBUS_MSG_INIT(0)
+);
+
+ZBUS_CHAN_DEFINE(PUBLISH_CHAN,
+		 struct publish_event,
+		 NULL,
+		 NULL,
+		 ZBUS_OBSERVERS(transport),
 		 ZBUS_MSG_INIT(0)
 );

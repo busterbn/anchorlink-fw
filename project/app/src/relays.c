@@ -9,9 +9,6 @@ LOG_MODULE_REGISTER(relays, LOG_LEVEL_INF);
 static const struct gpio_dt_spec relays[NUM_RELAYS] = {
 	GPIO_DT_SPEC_GET(DT_ALIAS(relay0), gpios),
 	GPIO_DT_SPEC_GET(DT_ALIAS(relay1), gpios),
-	GPIO_DT_SPEC_GET(DT_ALIAS(relay2), gpios),
-	GPIO_DT_SPEC_GET(DT_ALIAS(relay3), gpios),
-	GPIO_DT_SPEC_GET(DT_ALIAS(relay4), gpios),
 };
 
 static bool relay_state[NUM_RELAYS];
@@ -25,7 +22,6 @@ int relays_init(void)
 		}
 		int err = gpio_pin_configure_dt(&relays[i], GPIO_OUTPUT_INACTIVE);
 		if (err) {
-			LOG_ERR("Failed to configure relay %d: %d", i, err);
 			return err;
 		}
 	}
@@ -54,13 +50,10 @@ bool relay_get(uint8_t idx)
 	return relay_state[idx];
 }
 
-int relays_set_all(uint8_t mask)
+int relay_toggle(uint8_t idx)
 {
-	for (int i = 0; i < NUM_RELAYS; i++) {
-		int err = gpio_pin_set_dt(&relays[i], (mask >> i) & 1);
-		if (err) {
-			return err;
-		}
+	if (idx >= NUM_RELAYS) {
+		return -EINVAL;
 	}
-	return 0;
+	return relay_set(idx, !relay_state[idx]);
 }

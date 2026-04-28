@@ -3,11 +3,11 @@
 
 #include <zephyr/drivers/gpio.h>
 
-#define NUM_RELAYS 5
+#define NUM_RELAYS 2
 
 int relays_init(void);
 int relay_set(uint8_t idx, bool on);
 bool relay_get(uint8_t idx);
-int relays_set_all(uint8_t mask);
+int relay_toggle(uint8_t idx);
 
 #endif /* _RELAYS_H_ */

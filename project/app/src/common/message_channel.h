@@ -23,31 +23,37 @@ extern "C" {
 		IF_ENABLED(CONFIG_REBOOT, (sys_reboot(0)));					\
 	}
 
-struct payload {
-	float voltage;
-	float power_w;
-	bool relays[5];
-	int64_t ts;
-};
-
 enum network_status {
 	NETWORK_DISCONNECTED,
 	NETWORK_CONNECTED,
 };
 
 enum cmd_action {
-	CMD_SET_RELAY,
-	CMD_START_STREAM,
-	CMD_STOP_STREAM,
+	CMD_TOGGLE_RELAY,   /* relay = 0 or 1 */
+	CMD_REPORT_BAT,
 };
 
 struct command {
 	enum cmd_action action;
-	uint8_t relay;  /* 0-4 internal index */
-	bool state;
+	uint8_t relay;
 };
 
-ZBUS_CHAN_DECLARE(TRIGGER_CHAN, PAYLOAD_CHAN, NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN);
+enum publish_event_type {
+	PUB_RELAY_STATE,
+	PUB_BAT_REPORT,
+};
+
+struct publish_event {
+	enum publish_event_type type;
+	/* PUB_RELAY_STATE */
+	uint8_t relay;
+	bool state;
+	/* PUB_BAT_REPORT */
+	float bat1_v;
+	float bat2_v;
+};
+
+ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN);
 
 #ifdef __cplusplus
 }

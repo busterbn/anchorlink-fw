@@ -1,7 +1,11 @@
 /*
  * MQTT transport module using raw Zephyr MQTT client API.
- * Handles connection, LWT, publishing state, subscribing to commands,
- * and parsing incoming commands.
+ *
+ * Topics:
+ *   {imei}/relay1, {imei}/relay2  : retained relay state ("0" / "1")
+ *   {imei}/bat1,   {imei}/bat2    : on-demand battery voltage ("X.XX")
+ *   {imei}/cmd/#                  : incoming commands (rel1, rel2, bat)
+ *   {imei}/status                 : online / offline (LWT)
  */
 
 #include <zephyr/kernel.h>
@@ -14,7 +18,6 @@
 #include <zephyr/posix/netdb.h>
 #include <zephyr/posix/arpa/inet.h>
 #include <zephyr/random/random.h>
-#include <cJSON.h>
 
 #include <zephyr/shell/shell.h>
 
@@ -25,7 +28,6 @@ LOG_MODULE_REGISTER(transport, CONFIG_MQTT_SAMPLE_TRANSPORT_LOG_LEVEL);
 
 ZBUS_SUBSCRIBER_DEFINE(transport, CONFIG_MQTT_SAMPLE_TRANSPORT_MESSAGE_QUEUE_SIZE);
 
-/* Forward declarations */
 static const struct smf_state state[];
 static void connect_work_fn(struct k_work *work);
 
@@ -35,59 +37,40 @@ K_THREAD_STACK_DEFINE(stack_area, CONFIG_MQTT_SAMPLE_TRANSPORT_WORKQUEUE_STACK_S
 
 static struct k_work_q transport_queue;
 
-/* Internal states */
 enum module_state { MQTT_CONNECTED, MQTT_DISCONNECTED };
 
-/* MQTT client and buffers */
 static struct mqtt_client client;
 static uint8_t rx_buffer[CONFIG_MQTT_SAMPLE_TRANSPORT_RX_TX_BUFFER_SIZE];
 static uint8_t tx_buffer[CONFIG_MQTT_SAMPLE_TRANSPORT_RX_TX_BUFFER_SIZE];
 
-/* Broker address */
 static struct sockaddr_storage broker_addr;
 
-/* TLS config */
 static sec_tag_t sec_tags[] = { CONFIG_MQTT_SAMPLE_TRANSPORT_SEC_TAG };
 
-/* Client ID */
 static char client_id[CONFIG_MQTT_SAMPLE_TRANSPORT_CLIENT_ID_BUFFER_SIZE];
 
-/* Topics */
-static char state_topic[sizeof(client_id) + sizeof("/state")];
-static char cmd_topic[sizeof(client_id) + sizeof("/cmd")];
+/* Topic buffers */
+static char relay1_topic[sizeof(client_id) + sizeof("/relay1")];
+static char relay2_topic[sizeof(client_id) + sizeof("/relay2")];
+static char bat1_topic[sizeof(client_id) + sizeof("/bat1")];
+static char bat2_topic[sizeof(client_id) + sizeof("/bat2")];
+static char cmd_sub_topic[sizeof(client_id) + sizeof("/cmd/#")];
 static char status_topic[sizeof(client_id) + sizeof("/status")];
 
-/* LWT data — must be static since mqtt_client holds pointers */
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
 static uint8_t will_payload[] = "offline";
 
-/* Username/password — static storage for mqtt_client pointers */
 static struct mqtt_utf8 username;
 static struct mqtt_utf8 password;
 
-/* Poll thread */
 static struct pollfd fds[1];
 static int nfds;
 static bool mqtt_connected;
 
-/* Buffer for incoming publish payload */
-static char cmd_payload_buf[256];
+static char cmd_payload_buf[64];
 
-/*
- * Data usage tracking.
- *
- * MQTT packet overhead (bytes per message, excluding TLS):
- *   PUBLISH:   2 + topic_len + 2 (topic length field) + payload_len
- *              + 2 (packet id, QoS 1+)
- *   PINGREQ:   2
- *   PINGRESP:  2
- *   PUBACK:    4
- *   SUBACK:    4-5
- *   SUBSCRIBE: 2 + 2 + topic_len + 2 + 1
- *
- * We track: app payload bytes, estimated MQTT framing, and keepalive pings.
- */
+/* Data usage counters */
 static uint32_t app_tx;
 static uint32_t app_rx;
 static uint32_t mqtt_overhead_tx;
@@ -105,7 +88,6 @@ static int cmd_data_stats(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "MQTT total:     TX %u bytes  RX %u bytes", total_tx, total_rx);
 	shell_print(sh, "Keepalives:     %u pings (%u bytes TX + %u bytes RX)",
 		    ping_count, ping_count * 2, ping_count * 2);
-
 	return 0;
 }
 
@@ -116,7 +98,6 @@ static int cmd_data_reset(const struct shell *sh, size_t argc, char **argv)
 	mqtt_overhead_tx = 0;
 	mqtt_overhead_rx = 0;
 	ping_count = 0;
-
 	shell_print(sh, "Counters reset");
 	return 0;
 }
@@ -150,58 +131,22 @@ static struct s_object {
 	struct smf_ctx ctx;
 	const struct zbus_channel *chan;
 	enum network_status status;
-	struct payload payload;
+	struct publish_event pub;
 } s_obj;
 
-/* Build topics from client_id (IMEI) */
 static int topics_build(void)
 {
-	int len;
-
-	len = snprintk(state_topic, sizeof(state_topic), "%s/state", client_id);
-	if (len < 0 || len >= sizeof(state_topic)) {
+	if (snprintk(relay1_topic, sizeof(relay1_topic), "%s/relay1", client_id) >= sizeof(relay1_topic) ||
+	    snprintk(relay2_topic, sizeof(relay2_topic), "%s/relay2", client_id) >= sizeof(relay2_topic) ||
+	    snprintk(bat1_topic,   sizeof(bat1_topic),   "%s/bat1",   client_id) >= sizeof(bat1_topic) ||
+	    snprintk(bat2_topic,   sizeof(bat2_topic),   "%s/bat2",   client_id) >= sizeof(bat2_topic) ||
+	    snprintk(cmd_sub_topic, sizeof(cmd_sub_topic), "%s/cmd/#", client_id) >= sizeof(cmd_sub_topic) ||
+	    snprintk(status_topic, sizeof(status_topic), "%s/status", client_id) >= sizeof(status_topic)) {
 		return -EMSGSIZE;
 	}
-
-	len = snprintk(cmd_topic, sizeof(cmd_topic), "%s/cmd", client_id);
-	if (len < 0 || len >= sizeof(cmd_topic)) {
-		return -EMSGSIZE;
-	}
-
-	len = snprintk(status_topic, sizeof(status_topic), "%s/status", client_id);
-	if (len < 0 || len >= sizeof(status_topic)) {
-		return -EMSGSIZE;
-	}
-
 	return 0;
 }
 
-/* Serialize payload to JSON string, returns length or negative error */
-static int payload_to_json(const struct payload *p, char *buf, size_t buf_size)
-{
-	/* snprintk doesn't support %f, so format floats as fixed-point integers */
-	int voltage_int = (int)p->voltage;
-	int voltage_frac = (int)((p->voltage - voltage_int) * 100);
-	if (voltage_frac < 0) { voltage_frac = -voltage_frac; }
-
-	int power_int = (int)p->power_w;
-	int power_frac = (int)((p->power_w - power_int) * 10);
-	if (power_frac < 0) { power_frac = -power_frac; }
-
-	return snprintk(buf, buf_size,
-		"{\"voltage\":%d.%02d,\"power_w\":%d.%d,"
-		"\"relays\":[%s,%s,%s,%s,%s],\"ts\":%lld}",
-		voltage_int, voltage_frac,
-		power_int, power_frac,
-		p->relays[0] ? "true" : "false",
-		p->relays[1] ? "true" : "false",
-		p->relays[2] ? "true" : "false",
-		p->relays[3] ? "true" : "false",
-		p->relays[4] ? "true" : "false",
-		p->ts);
-}
-
-/* Publish a message on a given topic */
 static int mqtt_publish_msg(const char *topic, const uint8_t *data, size_t len,
 			    enum mqtt_qos qos, bool retain)
 {
@@ -220,39 +165,55 @@ static int mqtt_publish_msg(const char *topic, const uint8_t *data, size_t len,
 		LOG_WRN("mqtt_publish failed: %d", err);
 	} else {
 		app_tx += len;
-		/* MQTT PUBLISH overhead: 2 fixed header + 2 topic len + topic + (2 pkt id if qos>0) */
 		mqtt_overhead_tx += 2 + 2 + strlen(topic) + (qos > MQTT_QOS_0_AT_MOST_ONCE ? 2 : 0);
-		LOG_INF("Published on %s (%u bytes)", topic, len);
+		LOG_INF("Published on %s (%u bytes)", topic, (unsigned)len);
 	}
 	return err;
 }
 
-/* Publish state payload as JSON */
-static void publish_state(struct payload *p)
+static void publish_relay(uint8_t idx, bool state)
 {
-	char json_buf[256];
-	int len = payload_to_json(p, json_buf, sizeof(json_buf));
+	const char *topic = (idx == 0) ? relay1_topic : relay2_topic;
+	const char *payload = state ? "1" : "0";
+	mqtt_publish_msg(topic, (const uint8_t *)payload, 1,
+			 MQTT_QOS_0_AT_MOST_ONCE, true);
+}
 
-	if (len > 0 && len < sizeof(json_buf)) {
-		mqtt_publish_msg(state_topic, (uint8_t *)json_buf, len,
-				 MQTT_QOS_0_AT_MOST_ONCE, true);
+static void publish_battery(float bat1_v, float bat2_v)
+{
+	char buf[8];
+
+	int int_part = (int)bat1_v;
+	int frac_part = (int)((bat1_v - int_part) * 100);
+	if (frac_part < 0) { frac_part = -frac_part; }
+	int len = snprintk(buf, sizeof(buf), "%d.%02d", int_part, frac_part);
+	if (len > 0 && len < sizeof(buf)) {
+		mqtt_publish_msg(bat1_topic, (uint8_t *)buf, len,
+				 MQTT_QOS_0_AT_MOST_ONCE, false);
+	}
+
+	int_part = (int)bat2_v;
+	frac_part = (int)((bat2_v - int_part) * 100);
+	if (frac_part < 0) { frac_part = -frac_part; }
+	len = snprintk(buf, sizeof(buf), "%d.%02d", int_part, frac_part);
+	if (len > 0 && len < sizeof(buf)) {
+		mqtt_publish_msg(bat2_topic, (uint8_t *)buf, len,
+				 MQTT_QOS_0_AT_MOST_ONCE, false);
 	}
 }
 
-/* Publish online status */
 static void publish_online(void)
 {
 	mqtt_publish_msg(status_topic, (uint8_t *)"online", 6,
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
-/* Subscribe to command topic */
 static void subscribe_cmd(void)
 {
 	struct mqtt_topic topics[] = {
 		{
-			.topic.utf8 = (uint8_t *)cmd_topic,
-			.topic.size = strlen(cmd_topic),
+			.topic.utf8 = (uint8_t *)cmd_sub_topic,
+			.topic.size = strlen(cmd_sub_topic),
 			.qos = MQTT_QOS_1_AT_LEAST_ONCE,
 		},
 	};
@@ -262,69 +223,43 @@ static void subscribe_cmd(void)
 		.message_id = sys_rand32_get(),
 	};
 
-	LOG_INF("Subscribing to: %s", cmd_topic);
+	LOG_INF("Subscribing to: %s", cmd_sub_topic);
 	int err = mqtt_subscribe(&client, &list);
 	if (err) {
 		LOG_ERR("mqtt_subscribe failed: %d", err);
 	} else {
-		/* SUBSCRIBE: 2 fixed + 2 msg id + 2 topic len + topic + 1 qos */
-		mqtt_overhead_tx += 2 + 2 + 2 + strlen(cmd_topic) + 1;
+		mqtt_overhead_tx += 2 + 2 + 2 + strlen(cmd_sub_topic) + 1;
 	}
 }
 
-/* Parse and dispatch incoming command */
-static void handle_command(const char *data, size_t len)
+static void dispatch_command(struct command *cmd)
 {
-	cJSON *root = cJSON_ParseWithLength(data, len);
-	if (!root) {
-		LOG_WRN("Failed to parse command JSON");
-		return;
-	}
-
-	cJSON *action = cJSON_GetObjectItem(root, "action");
-	if (!cJSON_IsString(action)) {
-		LOG_WRN("Missing or invalid 'action' field");
-		cJSON_Delete(root);
-		return;
-	}
-
-	struct command cmd = { 0 };
-
-	if (strcmp(action->valuestring, "set_relay") == 0) {
-		cJSON *relay = cJSON_GetObjectItem(root, "relay");
-		cJSON *state = cJSON_GetObjectItem(root, "state");
-
-		if (!cJSON_IsNumber(relay) || !cJSON_IsBool(state)) {
-			LOG_WRN("Invalid set_relay command");
-			cJSON_Delete(root);
-			return;
-		}
-
-		cmd.action = CMD_SET_RELAY;
-		cmd.relay = relay->valueint - 1; /* 1-indexed to 0-indexed */
-		cmd.state = cJSON_IsTrue(state);
-
-	} else if (strcmp(action->valuestring, "start_stream") == 0) {
-		cmd.action = CMD_START_STREAM;
-
-	} else if (strcmp(action->valuestring, "stop_stream") == 0) {
-		cmd.action = CMD_STOP_STREAM;
-
-	} else {
-		LOG_WRN("Unknown action: %s", action->valuestring);
-		cJSON_Delete(root);
-		return;
-	}
-
-	cJSON_Delete(root);
-
-	int err = zbus_chan_pub(&CMD_CHAN, &cmd, K_SECONDS(1));
+	int err = zbus_chan_pub(&CMD_CHAN, cmd, K_SECONDS(1));
 	if (err) {
 		LOG_ERR("Failed to publish command: %d", err);
 	}
 }
 
-/* MQTT event handler */
+static void handle_cmd_payload(const char *data, size_t len)
+{
+	struct command cmd = { 0 };
+
+	if (len == 4 && memcmp(data, "rel1", 4) == 0) {
+		cmd.action = CMD_TOGGLE_RELAY;
+		cmd.relay = 0;
+		dispatch_command(&cmd);
+	} else if (len == 4 && memcmp(data, "rel2", 4) == 0) {
+		cmd.action = CMD_TOGGLE_RELAY;
+		cmd.relay = 1;
+		dispatch_command(&cmd);
+	} else if (len == 3 && memcmp(data, "bat", 3) == 0) {
+		cmd.action = CMD_REPORT_BAT;
+		dispatch_command(&cmd);
+	} else {
+		LOG_WRN("Unknown command payload (%u bytes)", (unsigned)len);
+	}
+}
+
 static void mqtt_evt_handler(struct mqtt_client *const cli,
 			     const struct mqtt_evt *evt)
 {
@@ -334,7 +269,6 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 			LOG_ERR("MQTT connect failed: %d", evt->result);
 			break;
 		}
-
 		struct transport_event event = { .type = CONNECTED };
 		zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
 		break;
@@ -352,7 +286,6 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 
 		if (payload_len >= sizeof(cmd_payload_buf)) {
 			LOG_WRN("Command payload too large: %zu", payload_len);
-			/* Read and discard */
 			mqtt_read_publish_payload_blocking(cli, cmd_payload_buf,
 							   sizeof(cmd_payload_buf) - 1);
 			break;
@@ -366,13 +299,11 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 		cmd_payload_buf[bytes] = '\0';
 
 		app_rx += bytes;
-		/* MQTT PUBLISH overhead: 2 fixed + 2 topic len + topic + (2 pkt id if qos>0) */
 		mqtt_overhead_rx += 2 + 2 + pub->message.topic.topic.size
 			+ (pub->message.topic.qos > MQTT_QOS_0_AT_MOST_ONCE ? 2 : 0);
 		LOG_INF("Received command (%d bytes): %s", bytes, cmd_payload_buf);
-		handle_command(cmd_payload_buf, bytes);
+		handle_cmd_payload(cmd_payload_buf, bytes);
 
-		/* Send PUBACK for QoS 1 */
 		if (pub->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
 			struct mqtt_puback_param ack = {
 				.message_id = pub->message_id,
@@ -383,19 +314,19 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 	}
 
 	case MQTT_EVT_SUBACK:
-		mqtt_overhead_rx += 5; /* SUBACK: 2 fixed + 2 msg id + 1 return code */
+		mqtt_overhead_rx += 5;
 		LOG_INF("Subscription acknowledged, id: %d", evt->param.suback.message_id);
 		break;
 
 	case MQTT_EVT_PUBACK:
-		mqtt_overhead_rx += 4; /* PUBACK: 2 fixed + 2 msg id */
+		mqtt_overhead_rx += 4;
 		LOG_DBG("PUBACK id: %d", evt->param.puback.message_id);
 		break;
 
 	case MQTT_EVT_PINGRESP:
 		ping_count++;
-		mqtt_overhead_tx += 2; /* PINGREQ */
-		mqtt_overhead_rx += 2; /* PINGRESP */
+		mqtt_overhead_tx += 2;
+		mqtt_overhead_rx += 2;
 		LOG_DBG("PINGRESP");
 		break;
 
@@ -404,7 +335,6 @@ static void mqtt_evt_handler(struct mqtt_client *const cli,
 	}
 }
 
-/* Resolve broker hostname */
 static int broker_resolve(void)
 {
 	struct addrinfo *result;
@@ -429,26 +359,18 @@ static int broker_resolve(void)
 	char addr_str[INET_ADDRSTRLEN];
 	inet_ntop(AF_INET, &broker4->sin_addr, addr_str, sizeof(addr_str));
 	LOG_INF("Broker resolved: %s:%d", addr_str, CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PORT);
-
 	return 0;
 }
 
-/* Initialize and configure the MQTT client */
 static int mqtt_client_setup(void)
 {
 	mqtt_client_init(&client);
 
-	/* Broker address */
 	client.broker = &broker_addr;
-
-	/* Event handler */
 	client.evt_cb = mqtt_evt_handler;
-
-	/* Client ID */
 	client.client_id.utf8 = (uint8_t *)client_id;
 	client.client_id.size = strlen(client_id);
 
-	/* Username & password */
 	username.utf8 = (uint8_t *)CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME;
 	username.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME);
 	client.user_name = &username;
@@ -457,19 +379,14 @@ static int mqtt_client_setup(void)
 	password.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD);
 	client.password = &password;
 
-	/* Buffers */
 	client.rx_buf = rx_buffer;
 	client.rx_buf_size = sizeof(rx_buffer);
 	client.tx_buf = tx_buffer;
 	client.tx_buf_size = sizeof(tx_buffer);
 
-	/* Protocol version */
 	client.protocol_version = MQTT_VERSION_3_1_1;
-
-	/* Clean session */
 	client.clean_session = IS_ENABLED(CONFIG_MQTT_CLEAN_SESSION) ? 1 : 0;
 
-	/* LWT */
 	will_topic.topic.utf8 = (uint8_t *)status_topic;
 	will_topic.topic.size = strlen(status_topic);
 	will_topic.qos = MQTT_QOS_1_AT_LEAST_ONCE;
@@ -480,7 +397,6 @@ static int mqtt_client_setup(void)
 	client.will_message = &will_message;
 	client.will_retain = 1;
 
-	/* TLS */
 	client.transport.type = MQTT_TRANSPORT_SECURE;
 	struct mqtt_sec_config *tls = &client.transport.tls.config;
 	tls->peer_verify = TLS_PEER_VERIFY_NONE;
@@ -498,7 +414,6 @@ static void prepare_fds(void)
 	nfds = 1;
 }
 
-/* Poll loop for MQTT — runs in its own thread */
 static void mqtt_poll_loop(void)
 {
 	while (mqtt_connected) {
@@ -508,7 +423,6 @@ static void mqtt_poll_loop(void)
 		if (ret > 0 && (fds[0].revents & POLLIN)) {
 			mqtt_input(&client);
 		}
-
 		mqtt_live(&client);
 	}
 }
@@ -518,14 +432,10 @@ static struct k_thread poll_thread;
 
 static void poll_thread_fn(void *p1, void *p2, void *p3)
 {
-	ARG_UNUSED(p1);
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
-
+	ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
 	mqtt_poll_loop();
 }
 
-/* Connect work */
 static void connect_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -562,14 +472,19 @@ static void connect_work_fn(struct k_work *work)
 		return;
 	}
 
-	/* Start poll thread */
 	mqtt_connected = true;
 	prepare_fds();
 	k_thread_create(&poll_thread, poll_stack, K_THREAD_STACK_SIZEOF(poll_stack),
 			poll_thread_fn, NULL, NULL, NULL, K_PRIO_COOP(7), 0, K_NO_WAIT);
 }
 
-/* SMF state handlers */
+/* Send the current relay state for both relays (called on connect). */
+extern bool relay_get(uint8_t idx);
+static void publish_initial_relay_states(void)
+{
+	publish_relay(0, relay_get(0));
+	publish_relay(1, relay_get(1));
+}
 
 static void disconnected_entry(void *o)
 {
@@ -590,11 +505,9 @@ static enum smf_state_result disconnected_run(void *o)
 	if ((user_object->status == NETWORK_DISCONNECTED) && (user_object->chan == &NETWORK_CHAN)) {
 		k_work_cancel_delayable(&connect_work);
 	}
-
 	if ((user_object->status == NETWORK_CONNECTED) && (user_object->chan == &NETWORK_CHAN)) {
 		k_work_reschedule_for_queue(&transport_queue, &connect_work, K_SECONDS(5));
 	}
-
 	return SMF_EVENT_HANDLED;
 }
 
@@ -610,6 +523,7 @@ static void connected_entry(void *o)
 
 	subscribe_cmd();
 	publish_online();
+	publish_initial_relay_states();
 }
 
 static enum smf_state_result connected_run(void *o)
@@ -622,8 +536,15 @@ static enum smf_state_result connected_run(void *o)
 		return SMF_EVENT_HANDLED;
 	}
 
-	if (user_object->chan == &PAYLOAD_CHAN) {
-		publish_state(&user_object->payload);
+	if (user_object->chan == &PUBLISH_CHAN) {
+		switch (user_object->pub.type) {
+		case PUB_RELAY_STATE:
+			publish_relay(user_object->pub.relay, user_object->pub.state);
+			break;
+		case PUB_BAT_REPORT:
+			publish_battery(user_object->pub.bat1_v, user_object->pub.bat2_v);
+			break;
+		}
 	}
 
 	return SMF_EVENT_HANDLED;
@@ -647,7 +568,7 @@ static void transport_task(void)
 	int err;
 	const struct zbus_channel *chan;
 	enum network_status status;
-	struct payload payload;
+	struct publish_event pub;
 
 	k_work_queue_init(&transport_queue);
 	k_work_queue_start(&transport_queue, stack_area,
@@ -671,14 +592,14 @@ static void transport_task(void)
 			smf_run_state(SMF_CTX(&s_obj));
 		}
 
-		if (&PAYLOAD_CHAN == chan) {
-			err = zbus_chan_read(&PAYLOAD_CHAN, &payload, K_SECONDS(1));
+		if (&PUBLISH_CHAN == chan) {
+			err = zbus_chan_read(&PUBLISH_CHAN, &pub, K_SECONDS(1));
 			if (err) {
 				LOG_ERR("zbus_chan_read error: %d", err);
 				SEND_FATAL_ERROR();
 				return;
 			}
-			s_obj.payload = payload;
+			s_obj.pub = pub;
 			smf_run_state(SMF_CTX(&s_obj));
 		}
 
