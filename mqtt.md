@@ -11,14 +11,16 @@
 All topics are prefixed with the device IMEI number. There are **two relays**
 (`relay1`, `relay2`) and **two batteries** (`bat1`, `bat2`).
 
-| Topic                | Direction        | QoS | Retained | Description                                  |
-|----------------------|------------------|-----|----------|----------------------------------------------|
-| `{imei}/relay1`      | Device → Server  | 0   | Yes      | Relay 1 state — `"0"` or `"1"`               |
-| `{imei}/relay2`      | Device → Server  | 0   | Yes      | Relay 2 state — `"0"` or `"1"`               |
-| `{imei}/bat1`        | Device → Server  | 0   | No       | Battery 1 voltage, e.g. `"14.45"`            |
-| `{imei}/bat2`        | Device → Server  | 0   | No       | Battery 2 voltage, e.g. `"12.83"`            |
-| `{imei}/cmd/#`       | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
-| `{imei}/status`      | Device → Broker  | 1   | Yes      | `"online"` / `"offline"` (LWT)               |
+| Topic                 | Direction        | QoS | Retained | Description                                  |
+|-----------------------|------------------|-----|----------|----------------------------------------------|
+| `{imei}/relay1`       | Device → Server  | 0   | Yes      | Relay 1 state — `"0"` or `"1"`               |
+| `{imei}/relay2`       | Device → Server  | 0   | Yes      | Relay 2 state — `"0"` or `"1"`               |
+| `{imei}/bat1`         | Device → Server  | 0   | No       | Battery 1 voltage, e.g. `"14.45"`            |
+| `{imei}/bat2`         | Device → Server  | 0   | No       | Battery 2 voltage, e.g. `"12.83"`            |
+| `{imei}/gps`          | Device → Server  | 0   | No       | GPS fix `"lat,lon"` (6 decimals)             |
+| `{imei}/anchor-alarm` | Device → Server  | 1   | No       | Anchor breach distance in meters             |
+| `{imei}/cmd/#`        | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
+| `{imei}/status`       | Device → Broker  | 1   | Yes      | `"online"` / `"offline"` (LWT)               |
 
 All payloads are plain UTF-8 strings — no JSON.
 
@@ -86,16 +88,44 @@ The broker automatically publishes `"offline"` if the device loses connection.
 
 ---
 
-## 4. Commands — `{imei}/cmd/#`
+## 4. GPS — `{imei}/gps`
+
+Published when the device gets a GPS fix in response to a `gps` command, after
+setting an anchor (the origin), or together with an anchor alarm.
+
+- **Payload:** `"lat,lon"` — both with 6 decimal places, e.g.
+  `"55.123456,12.345678"`. Negative values are prefixed with `-`.
+- **Retained:** No
+- **QoS:** 0
+
+---
+
+## 5. Anchor Alarm — `{imei}/anchor-alarm`
+
+Published once when the device drifts outside the configured anchor radius.
+The accompanying GPS location is also published on `{imei}/gps`. After firing,
+monitoring stops automatically.
+
+- **Payload:** Distance from the anchor origin in meters as a decimal integer,
+  e.g. `"42"`.
+- **Retained:** No
+- **QoS:** 1
+
+---
+
+## 6. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.
 
-| Payload | Action                                               |
-|---------|------------------------------------------------------|
-| `rel1`  | Toggle relay 1 (and publish new state on `/relay1`)  |
-| `rel2`  | Toggle relay 2 (and publish new state on `/relay2`)  |
-| `bat`   | Read both batteries and publish on `/bat1`, `/bat2`  |
+| Payload             | Action                                                                  |
+|---------------------|-------------------------------------------------------------------------|
+| `rel1`              | Toggle relay 1 (and publish new state on `/relay1`)                     |
+| `rel2`              | Toggle relay 2 (and publish new state on `/relay2`)                     |
+| `bat`               | Read both batteries and publish on `/bat1`, `/bat2`                     |
+| `gps`               | Acquire a GPS fix and publish on `/gps`                                 |
+| `anchor-alarm <m>`  | Set anchor: acquire fix, save as origin, then monitor with radius `<m>` |
+| `anchor-alarm 0`    | Cancel any active anchor monitoring                                     |
 
 - **QoS:** 1 (recommended, to guarantee delivery)
 - **Retained:** No
@@ -106,6 +136,37 @@ Example — toggle relay 1:
 ```
 Topic:    862345678901234/cmd/foo
 Payload:  rel1
+```
+
+Example — start anchor alarm with 25 m radius:
+
+```
+Topic:    862345678901234/cmd/foo
+Payload:  anchor-alarm 25
+```
+
+### Anchor alarm flow
+
+```
+Web UI                          Broker                              Device
+  |--- PUB cmd "anchor-alarm 25" ->|------------------------------->|
+  |                                |                       (acquire GPS fix)
+  |                                |<-- PUB gps="55.123456,12.345678"
+  |<-- forward gps ----------------|
+  |                                                  (origin saved; periodic
+  |                                                   GPS checks against 25 m)
+  |                                ...
+  |                                |<-- PUB anchor-alarm="42"     (drifted)
+  |                                |<-- PUB gps="55.123890,12.345111"
+  |<-- forward anchor-alarm + gps -|
+                                                       (monitoring stopped)
+```
+
+To cancel before any breach:
+
+```
+Topic:    862345678901234/cmd/foo
+Payload:  anchor-alarm 0
 ```
 
 ---

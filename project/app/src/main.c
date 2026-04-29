@@ -89,6 +89,9 @@ int main(void)
 		case CMD_REPORT_BAT:
 			handle_report_bat();
 			break;
+		default:
+			/* Other commands handled by other subscribers (gps). */
+			break;
 		}
 	}
 

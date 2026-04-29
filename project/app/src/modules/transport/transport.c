@@ -4,7 +4,10 @@
  * Topics:
  *   {imei}/relay1, {imei}/relay2  : retained relay state ("0" / "1")
  *   {imei}/bat1,   {imei}/bat2    : on-demand battery voltage ("X.XX")
- *   {imei}/cmd/#                  : incoming commands (rel1, rel2, bat)
+ *   {imei}/gps                    : on-demand GPS fix ("lat,lon")
+ *   {imei}/anchor-alarm           : anchor alarm (distance in meters)
+ *   {imei}/cmd/#                  : incoming commands (rel1, rel2, bat, gps,
+ *                                   "anchor-alarm <m>")
  *   {imei}/status                 : online / offline (LWT)
  */
 
@@ -56,6 +59,8 @@ static char bat1_topic[sizeof(client_id) + sizeof("/bat1")];
 static char bat2_topic[sizeof(client_id) + sizeof("/bat2")];
 static char cmd_sub_topic[sizeof(client_id) + sizeof("/cmd/#")];
 static char status_topic[sizeof(client_id) + sizeof("/status")];
+static char gps_topic[sizeof(client_id) + sizeof("/gps")];
+static char anchor_alarm_topic[sizeof(client_id) + sizeof("/anchor-alarm")];
 
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
@@ -141,7 +146,9 @@ static int topics_build(void)
 	    snprintk(bat1_topic,   sizeof(bat1_topic),   "%s/bat1",   client_id) >= sizeof(bat1_topic) ||
 	    snprintk(bat2_topic,   sizeof(bat2_topic),   "%s/bat2",   client_id) >= sizeof(bat2_topic) ||
 	    snprintk(cmd_sub_topic, sizeof(cmd_sub_topic), "%s/cmd/#", client_id) >= sizeof(cmd_sub_topic) ||
-	    snprintk(status_topic, sizeof(status_topic), "%s/status", client_id) >= sizeof(status_topic)) {
+	    snprintk(status_topic, sizeof(status_topic), "%s/status", client_id) >= sizeof(status_topic) ||
+	    snprintk(gps_topic, sizeof(gps_topic), "%s/gps", client_id) >= sizeof(gps_topic) ||
+	    snprintk(anchor_alarm_topic, sizeof(anchor_alarm_topic), "%s/anchor-alarm", client_id) >= sizeof(anchor_alarm_topic)) {
 		return -EMSGSIZE;
 	}
 	return 0;
@@ -208,6 +215,48 @@ static void publish_online(void)
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
+/* Format a signed coordinate with 6 decimal places without using %f.
+ * Latitude is in [-90,90], longitude in [-180,180], so int32_t is plenty.
+ */
+static int format_coord(char *buf, size_t size, double v)
+{
+	bool negative = (v < 0);
+	if (negative) {
+		v = -v;
+	}
+	int32_t scaled = (int32_t)(v * 1000000.0 + 0.5);
+	int32_t int_part = scaled / 1000000;
+	int32_t frac_part = scaled % 1000000;
+	return snprintk(buf, size, "%s%d.%06d",
+			negative ? "-" : "",
+			(int)int_part, (int)frac_part);
+}
+
+static void publish_gps(double lat, double lon)
+{
+	char buf[48];
+	char latbuf[16];
+	char lonbuf[16];
+
+	format_coord(latbuf, sizeof(latbuf), lat);
+	format_coord(lonbuf, sizeof(lonbuf), lon);
+	int len = snprintk(buf, sizeof(buf), "%s,%s", latbuf, lonbuf);
+	if (len > 0 && len < sizeof(buf)) {
+		mqtt_publish_msg(gps_topic, (uint8_t *)buf, len,
+				 MQTT_QOS_0_AT_MOST_ONCE, false);
+	}
+}
+
+static void publish_anchor_alarm_msg(uint32_t dist_m)
+{
+	char buf[12];
+	int len = snprintk(buf, sizeof(buf), "%u", dist_m);
+	if (len > 0 && len < sizeof(buf)) {
+		mqtt_publish_msg(anchor_alarm_topic, (uint8_t *)buf, len,
+				 MQTT_QOS_1_AT_LEAST_ONCE, false);
+	}
+}
+
 static void subscribe_cmd(void)
 {
 	struct mqtt_topic topics[] = {
@@ -254,6 +303,26 @@ static void handle_cmd_payload(const char *data, size_t len)
 		dispatch_command(&cmd);
 	} else if (len == 3 && memcmp(data, "bat", 3) == 0) {
 		cmd.action = CMD_REPORT_BAT;
+		dispatch_command(&cmd);
+	} else if (len == 3 && memcmp(data, "gps", 3) == 0) {
+		cmd.action = CMD_REQUEST_GPS;
+		dispatch_command(&cmd);
+	} else if (len > 13 && memcmp(data, "anchor-alarm ", 13) == 0) {
+		char num_buf[12];
+		size_t num_len = len - 13;
+		if (num_len >= sizeof(num_buf)) {
+			LOG_WRN("anchor-alarm distance too long");
+			return;
+		}
+		memcpy(num_buf, data + 13, num_len);
+		num_buf[num_len] = '\0';
+		long radius = strtol(num_buf, NULL, 10);
+		if (radius < 0) {
+			LOG_WRN("anchor-alarm: negative distance");
+			return;
+		}
+		cmd.action = CMD_SET_ANCHOR_ALARM;
+		cmd.distance_m = (uint32_t)radius;
 		dispatch_command(&cmd);
 	} else {
 		LOG_WRN("Unknown command payload (%u bytes)", (unsigned)len);
@@ -543,6 +612,13 @@ static enum smf_state_result connected_run(void *o)
 			break;
 		case PUB_BAT_REPORT:
 			publish_battery(user_object->pub.bat1_v, user_object->pub.bat2_v);
+			break;
+		case PUB_GPS:
+			publish_gps(user_object->pub.latitude, user_object->pub.longitude);
+			break;
+		case PUB_ANCHOR_ALARM:
+			publish_anchor_alarm_msg(user_object->pub.distance_m);
+			publish_gps(user_object->pub.latitude, user_object->pub.longitude);
 			break;
 		}
 	}

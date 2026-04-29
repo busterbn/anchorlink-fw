@@ -31,16 +31,21 @@ enum network_status {
 enum cmd_action {
 	CMD_TOGGLE_RELAY,   /* relay = 0 or 1 */
 	CMD_REPORT_BAT,
+	CMD_REQUEST_GPS,
+	CMD_SET_ANCHOR_ALARM, /* distance_m, 0 = clear */
 };
 
 struct command {
 	enum cmd_action action;
 	uint8_t relay;
+	uint32_t distance_m;
 };
 
 enum publish_event_type {
 	PUB_RELAY_STATE,
 	PUB_BAT_REPORT,
+	PUB_GPS,
+	PUB_ANCHOR_ALARM,
 };
 
 struct publish_event {
@@ -51,6 +56,11 @@ struct publish_event {
 	/* PUB_BAT_REPORT */
 	float bat1_v;
 	float bat2_v;
+	/* PUB_GPS, PUB_ANCHOR_ALARM */
+	double latitude;
+	double longitude;
+	/* PUB_ANCHOR_ALARM */
+	uint32_t distance_m;
 };
 
 ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN);

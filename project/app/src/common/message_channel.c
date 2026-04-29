@@ -30,7 +30,7 @@ ZBUS_CHAN_DEFINE(CMD_CHAN,
 		 struct command,
 		 NULL,
 		 NULL,
-		 ZBUS_OBSERVERS(main_sub),
+		 ZBUS_OBSERVERS(main_sub, gps_sub),
 		 ZBUS_MSG_INIT(0)
 );
 
