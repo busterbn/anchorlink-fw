@@ -19,6 +19,7 @@ add_subdirectory(src/common)
 add_subdirectory(src/modules/network)
 add_subdirectory(src/modules/transport)
 add_subdirectory(src/modules/error)
+add_subdirectory(src/modules/fota)
 
 # Optional modules
 add_subdirectory_ifdef(CONFIG_MQTT_SAMPLE_LED src/modules/led)

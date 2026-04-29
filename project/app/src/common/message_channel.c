@@ -14,7 +14,7 @@ ZBUS_CHAN_DEFINE(NETWORK_CHAN,
 		 enum network_status,
 		 NULL,
 		 NULL,
-		 ZBUS_OBSERVERS(transport IF_ENABLED(CONFIG_MQTT_SAMPLE_LED, (, led))),
+		 ZBUS_OBSERVERS(transport, fota IF_ENABLED(CONFIG_MQTT_SAMPLE_LED, (, led))),
 		 ZBUS_MSG_INIT(0)
 );
 
