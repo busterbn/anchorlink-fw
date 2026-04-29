@@ -6,6 +6,7 @@
 #include "relays.h"
 #include "sense.h"
 #include "buttons.h"
+#include "charging.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -71,6 +72,7 @@ int main(void)
 	relays_init();
 	sense_init();
 	buttons_init(on_button_pressed);
+	charging_init();
 
 	while (!zbus_sub_wait(&main_sub, &chan, K_FOREVER)) {
 		if (chan != &CMD_CHAN) {

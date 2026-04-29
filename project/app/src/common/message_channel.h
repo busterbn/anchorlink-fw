@@ -46,6 +46,7 @@ enum publish_event_type {
 	PUB_BAT_REPORT,
 	PUB_GPS,
 	PUB_ANCHOR_ALARM,
+	PUB_CHARGING,
 };
 
 struct publish_event {
@@ -61,6 +62,9 @@ struct publish_event {
 	double longitude;
 	/* PUB_ANCHOR_ALARM */
 	uint32_t distance_m;
+	/* PUB_CHARGING */
+	uint8_t battery;
+	bool charging;
 };
 
 ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN);

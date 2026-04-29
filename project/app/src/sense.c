@@ -33,6 +33,9 @@ static struct adc_sequence sequence = {
 	.buffer_size = sizeof(sample_buf),
 };
 
+/* Serialises ADC + EN-pin access across threads. */
+static K_MUTEX_DEFINE(sense_lock);
+
 int sense_init(void)
 {
 	const struct gpio_dt_spec *en_pins[] = { &vbat_en, &vbat2_en, &ignition_en };
@@ -81,6 +84,8 @@ int sense_read_mv(enum sense_channel ch, int32_t *millivolts)
 		return -EINVAL;
 	}
 
+	k_mutex_lock(&sense_lock, K_FOREVER);
+
 	const struct gpio_dt_spec *en = en_for(ch);
 	bool toggled_en = false;
 
@@ -102,6 +107,7 @@ int sense_read_mv(enum sense_channel ch, int32_t *millivolts)
 	}
 
 	if (err) {
+		k_mutex_unlock(&sense_lock);
 		return err;
 	}
 
@@ -110,6 +116,7 @@ int sense_read_mv(enum sense_channel ch, int32_t *millivolts)
 		mv = (int32_t)sample_buf;
 	}
 	*millivolts = mv;
+	k_mutex_unlock(&sense_lock);
 	return 0;
 }
 

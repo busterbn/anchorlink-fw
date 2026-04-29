@@ -17,6 +17,8 @@ All topics are prefixed with the device IMEI number. There are **two relays**
 | `{imei}/relay2`       | Device → Server  | 0   | Yes      | Relay 2 state — `"0"` or `"1"`               |
 | `{imei}/bat1`         | Device → Server  | 0   | No       | Battery 1 voltage, e.g. `"14.45"`            |
 | `{imei}/bat2`         | Device → Server  | 0   | No       | Battery 2 voltage, e.g. `"12.83"`            |
+| `{imei}/bat1/charging`| Device → Server  | 0   | Yes      | Battery 1 charging state — `"0"` or `"1"`    |
+| `{imei}/bat2/charging`| Device → Server  | 0   | Yes      | Battery 2 charging state — `"0"` or `"1"`    |
 | `{imei}/gps`          | Device → Server  | 0   | No       | GPS fix `"lat,lon"` (6 decimals)             |
 | `{imei}/anchor-alarm` | Device → Server  | 1   | No       | Anchor breach distance in meters             |
 | `{imei}/cmd/#`        | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
@@ -88,7 +90,32 @@ The broker automatically publishes `"offline"` if the device loses connection.
 
 ---
 
-## 4. GPS — `{imei}/gps`
+## 4. Charging State — `{imei}/bat1/charging`, `{imei}/bat2/charging`
+
+The device samples both battery voltages every 10 seconds and tracks whether
+each battery is being charged (voltage above 13.0 V) or not (voltage below
+12.8 V), with hysteresis in between. Whenever a battery's charging state
+flips, the new state is published on its `charging` topic.
+
+The current state is also republished for both batteries immediately after
+(re)connecting to the broker, so newly-subscribing clients see it without
+waiting for a transition.
+
+- **Payload:** `"1"` (charging) or `"0"` (not charging)
+- **Retained:** Yes
+- **QoS:** 0
+
+Example:
+
+```
+Topic:    862345678901234/bat1/charging
+Payload:  1
+Retained: true
+```
+
+---
+
+## 5. GPS — `{imei}/gps`
 
 Published when the device gets a GPS fix in response to a `gps` command, after
 setting an anchor (the origin), or together with an anchor alarm.
@@ -100,7 +127,7 @@ setting an anchor (the origin), or together with an anchor alarm.
 
 ---
 
-## 5. Anchor Alarm — `{imei}/anchor-alarm`
+## 6. Anchor Alarm — `{imei}/anchor-alarm`
 
 Published once when the device drifts outside the configured anchor radius.
 The accompanying GPS location is also published on `{imei}/gps`. After firing,
@@ -113,7 +140,7 @@ monitoring stops automatically.
 
 ---
 
-## 6. Commands — `{imei}/cmd/#`
+## 7. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.
