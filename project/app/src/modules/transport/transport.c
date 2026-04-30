@@ -9,6 +9,7 @@
  *   {imei}/anchor-alarm                   : anchor alarm (distance in meters)
  *   {imei}/cmd/#                          : incoming commands (rel1, rel2, bat,
  *                                           gps, "anchor-alarm <m>")
+ *   {imei}/pair                           : pairing request ("ready") on BTN0 long press
  *   {imei}/status                         : online / offline (LWT)
  */
 
@@ -64,6 +65,7 @@ static char gps_topic[sizeof(client_id) + sizeof("/gps")];
 static char anchor_alarm_topic[sizeof(client_id) + sizeof("/anchor-alarm")];
 static char bat1_charging_topic[sizeof(client_id) + sizeof("/bat1/charging")];
 static char bat2_charging_topic[sizeof(client_id) + sizeof("/bat2/charging")];
+static char pair_topic[sizeof(client_id) + sizeof("/pair")];
 
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
@@ -153,7 +155,8 @@ static int topics_build(void)
 	    snprintk(gps_topic, sizeof(gps_topic), "%s/gps", client_id) >= sizeof(gps_topic) ||
 	    snprintk(anchor_alarm_topic, sizeof(anchor_alarm_topic), "%s/anchor-alarm", client_id) >= sizeof(anchor_alarm_topic) ||
 	    snprintk(bat1_charging_topic, sizeof(bat1_charging_topic), "%s/bat1/charging", client_id) >= sizeof(bat1_charging_topic) ||
-	    snprintk(bat2_charging_topic, sizeof(bat2_charging_topic), "%s/bat2/charging", client_id) >= sizeof(bat2_charging_topic)) {
+	    snprintk(bat2_charging_topic, sizeof(bat2_charging_topic), "%s/bat2/charging", client_id) >= sizeof(bat2_charging_topic) ||
+	    snprintk(pair_topic, sizeof(pair_topic), "%s/pair", client_id) >= sizeof(pair_topic)) {
 		return -EMSGSIZE;
 	}
 	return 0;
@@ -269,6 +272,12 @@ static void publish_charging(uint8_t idx, bool state)
 	const char *payload = state ? "1" : "0";
 	mqtt_publish_msg(topic, (const uint8_t *)payload, 1,
 			 MQTT_QOS_0_AT_MOST_ONCE, true);
+}
+
+static void publish_pair(void)
+{
+	mqtt_publish_msg(pair_topic, (const uint8_t *)"ready", 5,
+			 MQTT_QOS_1_AT_LEAST_ONCE, false);
 }
 
 static void subscribe_cmd(void)
@@ -646,6 +655,9 @@ static enum smf_state_result connected_run(void *o)
 		case PUB_CHARGING:
 			publish_charging(user_object->pub.battery,
 					 user_object->pub.charging);
+			break;
+		case PUB_PAIR:
+			publish_pair();
 			break;
 		}
 	}

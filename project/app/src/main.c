@@ -2,6 +2,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 
+#include <date_time.h>
+
 #include "message_channel.h"
 #include "relays.h"
 #include "sense.h"
@@ -63,6 +65,46 @@ static void on_button_pressed(uint8_t idx)
 	}
 }
 
+static void on_button_long_pressed(uint8_t idx)
+{
+	if (idx != 0) {
+		return;
+	}
+	LOG_INF("BTN0 long press -> pair");
+	struct publish_event ev = { .type = PUB_PAIR };
+	zbus_chan_pub(&PUBLISH_CHAN, &ev, K_SECONDS(1));
+}
+
+static void hourly_bat_work_fn(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(hourly_bat_work, hourly_bat_work_fn);
+
+static void hourly_bat_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	int64_t now_ms;
+	int err = date_time_now(&now_ms);
+	if (err) {
+		LOG_DBG("date_time not ready (%d), retrying in 60s", err);
+		k_work_reschedule(&hourly_bat_work, K_SECONDS(60));
+		return;
+	}
+
+	int64_t now_s = now_ms / 1000;
+	int64_t past_hour = now_s % 3600;
+
+	/* If we are within the first 5 s of an hour, treat it as "the hour"
+	 * and report; otherwise just sleep until the next one. */
+	if (past_hour < 5) {
+		LOG_INF("Hourly battery report");
+		struct command cmd = { .action = CMD_REPORT_BAT };
+		zbus_chan_pub(&CMD_CHAN, &cmd, K_SECONDS(1));
+	}
+
+	int64_t to_next = 3600 - past_hour;
+	k_work_reschedule(&hourly_bat_work, K_SECONDS(to_next));
+}
+
 int main(void)
 {
 	const struct zbus_channel *chan;
@@ -71,8 +113,10 @@ int main(void)
 
 	relays_init();
 	sense_init();
-	buttons_init(on_button_pressed);
+	buttons_init(on_button_pressed, on_button_long_pressed);
 	charging_init();
+
+	k_work_reschedule(&hourly_bat_work, K_SECONDS(60));
 
 	while (!zbus_sub_wait(&main_sub, &chan, K_FOREVER)) {
 		if (chan != &CMD_CHAN) {

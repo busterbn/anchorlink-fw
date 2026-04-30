@@ -47,6 +47,7 @@ enum publish_event_type {
 	PUB_GPS,
 	PUB_ANCHOR_ALARM,
 	PUB_CHARGING,
+	PUB_PAIR,
 };
 
 struct publish_event {

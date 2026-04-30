@@ -22,6 +22,7 @@ All topics are prefixed with the device IMEI number. There are **two relays**
 | `{imei}/gps`          | Device → Server  | 0   | No       | GPS fix `"lat,lon"` (6 decimals)             |
 | `{imei}/anchor-alarm` | Device → Server  | 1   | No       | Anchor breach distance in meters             |
 | `{imei}/cmd/#`        | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
+| `{imei}/pair`         | Device → Server  | 1   | No       | Pairing request — `"ready"` (BTN0 long press) |
 | `{imei}/status`       | Device → Broker  | 1   | Yes      | `"online"` / `"offline"` (LWT)               |
 
 All payloads are plain UTF-8 strings — no JSON.
@@ -51,7 +52,8 @@ Retained: true
 
 ## 2. Battery Voltage — `{imei}/bat1`, `{imei}/bat2`
 
-Published only when the device receives a `bat` command (see §4). Both batteries
+Published when the device receives a `bat` command (see §8) **or automatically
+once an hour, on the hour** (UTC) — at 08:00, 09:00, 10:00, etc. Both batteries
 are published together.
 
 - **Payload:** Voltage as a decimal string with 2 decimals, e.g. `"14.45"`
@@ -140,7 +142,26 @@ monitoring stops automatically.
 
 ---
 
-## 7. Commands — `{imei}/cmd/#`
+## 7. Pairing — `{imei}/pair`
+
+Published by the device when **BTN0 is held for 3 seconds**. The intended use is
+to let a web/app client put itself into pairing mode and bind to the device.
+
+- **Payload:** `"ready"`
+- **Retained:** No
+- **QoS:** 1
+
+Example:
+
+```
+Topic:    862345678901234/pair
+Payload:  ready
+Retained: false
+```
+
+---
+
+## 8. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.
@@ -266,11 +287,12 @@ Device                              Broker                          Web UI
 
 ## Buttons (device side, FYI)
 
-| Button | Action                                                       |
-|--------|--------------------------------------------------------------|
-| BTN0   | Logs `"BTN0 pressed"` (no MQTT side effect)                  |
-| BTN1   | Toggles relay 1 → publishes new state on `{imei}/relay1`     |
-| BTN2   | Toggles relay 2 → publishes new state on `{imei}/relay2`     |
+| Button         | Action                                                       |
+|----------------|--------------------------------------------------------------|
+| BTN0 (short)   | Logs `"BTN0 pressed"` (no MQTT side effect)                  |
+| BTN0 (3 s hold)| Publishes `"ready"` on `{imei}/pair`                         |
+| BTN1           | Toggles relay 1 → publishes new state on `{imei}/relay1`     |
+| BTN2           | Toggles relay 2 → publishes new state on `{imei}/relay2`     |
 
 ---
 
