@@ -48,6 +48,7 @@ enum publish_event_type {
 	PUB_ANCHOR_ALARM,
 	PUB_CHARGING,
 	PUB_PAIR,
+	PUB_RELAY_CURRENT,
 };
 
 struct publish_event {
@@ -66,6 +67,9 @@ struct publish_event {
 	/* PUB_CHARGING */
 	uint8_t battery;
 	bool charging;
+	/* PUB_RELAY_CURRENT (relay = 0 or 1) */
+	float current_avg_a;
+	float current_latest_a;
 };
 
 ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN);

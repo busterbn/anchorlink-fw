@@ -120,6 +120,24 @@ int sense_read_mv(enum sense_channel ch, int32_t *millivolts)
 	return 0;
 }
 
+/* Hardware divider ratio V_actual / V_pin for each channel.
+ *   VBAT/VBAT2: R1=100k, R2=20k -> (100+20)/20 = 6
+ *   REL0/REL1:  R1=10k,  R2=2.5k -> (10+2.5)/2.5 = 5
+ *   IGNITION:   no divider assumed                                    */
+static float divider_scale(enum sense_channel ch)
+{
+	switch (ch) {
+	case SENSE_VBAT:
+	case SENSE_VBAT2:
+		return 6.0f;
+	case SENSE_REL0:
+	case SENSE_REL1:
+		return 5.0f;
+	default:
+		return 1.0f;
+	}
+}
+
 int sense_read_v(enum sense_channel ch, float *volts)
 {
 	int32_t mv = 0;
@@ -127,6 +145,6 @@ int sense_read_v(enum sense_channel ch, float *volts)
 	if (err) {
 		return err;
 	}
-	*volts = mv / 1000.0f;
+	*volts = (mv / 1000.0f) * divider_scale(ch);
 	return 0;
 }

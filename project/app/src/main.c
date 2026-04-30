@@ -9,6 +9,7 @@
 #include "sense.h"
 #include "buttons.h"
 #include "charging.h"
+#include "relay_current.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -115,6 +116,7 @@ int main(void)
 	sense_init();
 	buttons_init(on_button_pressed, on_button_long_pressed);
 	charging_init();
+	relay_current_init();
 
 	k_work_reschedule(&hourly_bat_work, K_SECONDS(60));
 
