@@ -13,12 +13,10 @@ All topics are prefixed with the device IMEI number. There are **two relays**
 
 | Topic                 | Direction        | QoS | Retained | Description                                  |
 |-----------------------|------------------|-----|----------|----------------------------------------------|
-| `{imei}/relay1`       | Device → Server  | 0   | Yes      | Relay 1 state — `"0"` or `"1"`               |
-| `{imei}/relay2`       | Device → Server  | 0   | Yes      | Relay 2 state — `"0"` or `"1"`               |
+| `{imei}/relay1`       | Device → Server  | 1   | Yes      | Relay 1 state — `"0"` or `"1"`               |
+| `{imei}/relay2`       | Device → Server  | 1   | Yes      | Relay 2 state — `"0"` or `"1"`               |
 | `{imei}/bat1`         | Device → Server  | 0   | No       | Battery 1 voltage, e.g. `"14.45"`            |
 | `{imei}/bat2`         | Device → Server  | 0   | No       | Battery 2 voltage, e.g. `"12.83"`            |
-| `{imei}/bat1/charging`| Device → Server  | 0   | Yes      | Battery 1 charging state — `"0"` or `"1"`    |
-| `{imei}/bat2/charging`| Device → Server  | 0   | Yes      | Battery 2 charging state — `"0"` or `"1"`    |
 | `{imei}/gps`          | Device → Server  | 0   | No       | GPS fix `"lat,lon"` (6 decimals)             |
 | `{imei}/anchor-alarm` | Device → Server  | 1   | No       | Anchor breach distance in meters             |
 | `{imei}/cmd/#`        | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
@@ -40,7 +38,7 @@ current state.
 
 - **Payload:** `"1"` (ON) or `"0"` (OFF)
 - **Retained:** Yes — new subscribers immediately receive the latest state
-- **QoS:** 0
+- **QoS:** 1
 
 Example:
 
@@ -54,9 +52,19 @@ Retained: true
 
 ## 2. Battery Voltage — `{imei}/bat1`, `{imei}/bat2`
 
-Published when the device receives a `bat` command (see §8) **or automatically
-once an hour, on the hour** (UTC) — at 08:00, 09:00, 10:00, etc. Both batteries
-are published together.
+The device samples both batteries **once a minute** and publishes whenever
+either voltage has moved by **≥ 0.10 V** since the last published reading.
+Both batteries are always published together (so the cloud can assume that
+between messages the voltage stays within ±0.10 V of the latest payload).
+
+The device also publishes:
+
+- **Immediately on (re)connect to the broker**, so newly-subscribing clients
+  see a current value without waiting for the next change.
+- **On demand** in response to a `bat` command (see §8).
+
+All charging detection / state-of-charge logic lives in the cloud — the
+device only reports voltage.
 
 - **Payload:** Voltage as a decimal string with 2 decimals, e.g. `"14.45"`
 - **Retained:** No
@@ -94,32 +102,7 @@ The broker automatically publishes `"offline"` if the device loses connection.
 
 ---
 
-## 4. Charging State — `{imei}/bat1/charging`, `{imei}/bat2/charging`
-
-The device samples both battery voltages every 10 seconds and tracks whether
-each battery is being charged (voltage above 13.0 V) or not (voltage below
-12.8 V), with hysteresis in between. Whenever a battery's charging state
-flips, the new state is published on its `charging` topic.
-
-The current state is also republished for both batteries immediately after
-(re)connecting to the broker, so newly-subscribing clients see it without
-waiting for a transition.
-
-- **Payload:** `"1"` (charging) or `"0"` (not charging)
-- **Retained:** Yes
-- **QoS:** 0
-
-Example:
-
-```
-Topic:    862345678901234/bat1/charging
-Payload:  1
-Retained: true
-```
-
----
-
-## 5. GPS — `{imei}/gps`
+## 4. GPS — `{imei}/gps`
 
 Published when the device gets a GPS fix in response to a `gps` command, after
 setting an anchor (the origin), or together with an anchor alarm.
@@ -131,7 +114,7 @@ setting an anchor (the origin), or together with an anchor alarm.
 
 ---
 
-## 6. Anchor Alarm — `{imei}/anchor-alarm`
+## 5. Anchor Alarm — `{imei}/anchor-alarm`
 
 Published once when the device drifts outside the configured anchor radius.
 The accompanying GPS location is also published on `{imei}/gps`. After firing,
@@ -144,7 +127,7 @@ monitoring stops automatically.
 
 ---
 
-## 7. Relay Current — `{imei}/relay1/current_h`, `{imei}/relay2/current_h`
+## 6. Relay Current — `{imei}/relay1/current_h`, `{imei}/relay2/current_h`
 
 When a relay is ON the device samples its current draw every 10 s through a
 10 mΩ shunt sitting between battery 1 and the relay output:
@@ -174,7 +157,7 @@ Payload:  3.45,3.21
 
 ---
 
-## 8. Pairing — `{imei}/pair`
+## 7. Pairing — `{imei}/pair`
 
 Published by the device when **BTN0 is held for 3 seconds**. The intended use is
 to let a web/app client put itself into pairing mode and bind to the device.
@@ -193,7 +176,7 @@ Retained: false
 
 ---
 
-## 9. Commands — `{imei}/cmd/#`
+## 8. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.
@@ -206,6 +189,7 @@ The exact subtopic is not significant; the device acts on the **payload** only.
 | `gps`               | Acquire a GPS fix and publish on `/gps`                                 |
 | `anchor-alarm <m>`  | Set anchor: acquire fix, save as origin, then monitor with radius `<m>` |
 | `anchor-alarm 0`    | Cancel any active anchor monitoring                                     |
+| `fota_update`       | Check for an OTA update now and install if newer (device reboots)       |
 
 - **QoS:** 1 (recommended, to guarantee delivery)
 - **Retained:** No
@@ -262,6 +246,8 @@ Device                                           Broker                Web UI
   |--- PUB {imei}/status="online"  retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay1="0|1"     retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay2="0|1"     retain=true ---->|--- forward --------->|
+  |--- PUB {imei}/bat1="X.XX" ---------------------->|--- forward --------->|
+  |--- PUB {imei}/bat2="X.XX" ---------------------->|--- forward --------->|
 ```
 
 ### UI Subscribes (any time)
@@ -332,9 +318,9 @@ Device                              Broker                          Web UI
 
 - **Client ID:** The device uses its IMEI as the MQTT client ID. Web clients
   use an arbitrary unique ID.
-- **No streaming mode:** The device no longer publishes a periodic state
-  bundle. Relay state is published on change (and once on connect); battery
-  voltages are published only on demand.
+- **No streaming mode:** The device does not publish a periodic state bundle.
+  Relay state is published on change (and once on connect); battery voltages
+  are published on change (≥ 0.10 V), on connect, and on demand.
 - **Extensibility:** New command payloads can be added by extending the
   payload-string table above. New telemetry can be added by adding new topics
   under `{imei}/...`.

@@ -3,12 +3,11 @@
  *
  * Topics:
  *   {imei}/relay1, {imei}/relay2          : retained relay state ("0" / "1")
- *   {imei}/bat1,   {imei}/bat2            : on-demand battery voltage ("X.XX")
- *   {imei}/bat1/charging, /bat2/charging  : retained charging state ("0" / "1")
+ *   {imei}/bat1,   {imei}/bat2            : battery voltage ("X.XX")
  *   {imei}/gps                            : on-demand GPS fix ("lat,lon")
  *   {imei}/anchor-alarm                   : anchor alarm (distance in meters)
  *   {imei}/cmd/#                          : incoming commands (rel1, rel2, bat,
- *                                           gps, "anchor-alarm <m>")
+ *                                           gps, "anchor-alarm <m>", fota_update)
  *   {imei}/pair                           : pairing request ("ready") on BTN0 long press
  *   {imei}/relay1/current_h               : hourly "avg,latest" amps while relay 1 was on
  *   {imei}/relay2/current_h               : hourly "avg,latest" amps while relay 2 was on
@@ -65,8 +64,6 @@ static char cmd_sub_topic[sizeof(client_id) + sizeof("/cmd/#")];
 static char status_topic[sizeof(client_id) + sizeof("/status")];
 static char gps_topic[sizeof(client_id) + sizeof("/gps")];
 static char anchor_alarm_topic[sizeof(client_id) + sizeof("/anchor-alarm")];
-static char bat1_charging_topic[sizeof(client_id) + sizeof("/bat1/charging")];
-static char bat2_charging_topic[sizeof(client_id) + sizeof("/bat2/charging")];
 static char pair_topic[sizeof(client_id) + sizeof("/pair")];
 static char relay1_current_topic[sizeof(client_id) + sizeof("/relay1/current_h")];
 static char relay2_current_topic[sizeof(client_id) + sizeof("/relay2/current_h")];
@@ -158,8 +155,6 @@ static int topics_build(void)
 	    snprintk(status_topic, sizeof(status_topic), "%s/status", client_id) >= sizeof(status_topic) ||
 	    snprintk(gps_topic, sizeof(gps_topic), "%s/gps", client_id) >= sizeof(gps_topic) ||
 	    snprintk(anchor_alarm_topic, sizeof(anchor_alarm_topic), "%s/anchor-alarm", client_id) >= sizeof(anchor_alarm_topic) ||
-	    snprintk(bat1_charging_topic, sizeof(bat1_charging_topic), "%s/bat1/charging", client_id) >= sizeof(bat1_charging_topic) ||
-	    snprintk(bat2_charging_topic, sizeof(bat2_charging_topic), "%s/bat2/charging", client_id) >= sizeof(bat2_charging_topic) ||
 	    snprintk(pair_topic, sizeof(pair_topic), "%s/pair", client_id) >= sizeof(pair_topic) ||
 	    snprintk(relay1_current_topic, sizeof(relay1_current_topic), "%s/relay1/current_h", client_id) >= sizeof(relay1_current_topic) ||
 	    snprintk(relay2_current_topic, sizeof(relay2_current_topic), "%s/relay2/current_h", client_id) >= sizeof(relay2_current_topic)) {
@@ -198,7 +193,7 @@ static void publish_relay(uint8_t idx, bool state)
 	const char *topic = (idx == 0) ? relay1_topic : relay2_topic;
 	const char *payload = state ? "1" : "0";
 	mqtt_publish_msg(topic, (const uint8_t *)payload, 1,
-			 MQTT_QOS_0_AT_MOST_ONCE, true);
+			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
 static void publish_battery(float bat1_v, float bat2_v)
@@ -272,14 +267,6 @@ static void publish_anchor_alarm_msg(uint32_t dist_m)
 	}
 }
 
-static void publish_charging(uint8_t idx, bool state)
-{
-	const char *topic = (idx == 0) ? bat1_charging_topic : bat2_charging_topic;
-	const char *payload = state ? "1" : "0";
-	mqtt_publish_msg(topic, (const uint8_t *)payload, 1,
-			 MQTT_QOS_0_AT_MOST_ONCE, true);
-}
-
 static void publish_pair(void)
 {
 	mqtt_publish_msg(pair_topic, (const uint8_t *)"ready", 5,
@@ -292,13 +279,16 @@ static int format_amps(char *buf, size_t size, float v)
 	if (v < 0.0f) {
 		v = 0.0f;
 	}
-	int int_part = (int)v;
-	int frac_part = (int)((v - int_part) * 100.0f + 0.5f);
+	if (v > 9999.0f) {
+		v = 9999.0f;
+	}
+	unsigned int int_part = (unsigned int)v;
+	unsigned int frac_part = (unsigned int)((v - int_part) * 100.0f + 0.5f);
 	if (frac_part >= 100) {
 		int_part += 1;
 		frac_part -= 100;
 	}
-	return snprintk(buf, size, "%d.%02d", int_part, frac_part);
+	return snprintk(buf, size, "%u.%02u", int_part, frac_part);
 }
 
 static void publish_relay_current(uint8_t idx, float avg_a, float latest_a)
@@ -367,6 +357,9 @@ static void handle_cmd_payload(const char *data, size_t len)
 		dispatch_command(&cmd);
 	} else if (len == 3 && memcmp(data, "gps", 3) == 0) {
 		cmd.action = CMD_REQUEST_GPS;
+		dispatch_command(&cmd);
+	} else if (len == 11 && memcmp(data, "fota_update", 11) == 0) {
+		cmd.action = CMD_FOTA_UPDATE;
 		dispatch_command(&cmd);
 	} else if (len > 13 && memcmp(data, "anchor-alarm ", 13) == 0) {
 		char num_buf[12];
@@ -616,13 +609,8 @@ static void publish_initial_relay_states(void)
 	publish_relay(1, relay_get(1));
 }
 
-/* Send the latest known charging state for both batteries on connect. */
-extern bool charging_get(uint8_t idx);
-static void publish_initial_charging_states(void)
-{
-	publish_charging(0, charging_get(0));
-	publish_charging(1, charging_get(1));
-}
+/* Send a fresh battery report on connect so the cloud has up-to-date data. */
+extern void battery_monitor_force_report(void);
 
 static void disconnected_entry(void *o)
 {
@@ -662,7 +650,7 @@ static void connected_entry(void *o)
 	subscribe_cmd();
 	publish_online();
 	publish_initial_relay_states();
-	publish_initial_charging_states();
+	battery_monitor_force_report();
 }
 
 static enum smf_state_result connected_run(void *o)
@@ -689,10 +677,6 @@ static enum smf_state_result connected_run(void *o)
 		case PUB_ANCHOR_ALARM:
 			publish_anchor_alarm_msg(user_object->pub.distance_m);
 			publish_gps(user_object->pub.latitude, user_object->pub.longitude);
-			break;
-		case PUB_CHARGING:
-			publish_charging(user_object->pub.battery,
-					 user_object->pub.charging);
 			break;
 		case PUB_PAIR:
 			publish_pair();

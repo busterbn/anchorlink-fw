@@ -33,6 +33,7 @@ enum cmd_action {
 	CMD_REPORT_BAT,
 	CMD_REQUEST_GPS,
 	CMD_SET_ANCHOR_ALARM, /* distance_m, 0 = clear */
+	CMD_FOTA_UPDATE,
 };
 
 struct command {
@@ -46,7 +47,6 @@ enum publish_event_type {
 	PUB_BAT_REPORT,
 	PUB_GPS,
 	PUB_ANCHOR_ALARM,
-	PUB_CHARGING,
 	PUB_PAIR,
 	PUB_RELAY_CURRENT,
 };
@@ -64,9 +64,6 @@ struct publish_event {
 	double longitude;
 	/* PUB_ANCHOR_ALARM */
 	uint32_t distance_m;
-	/* PUB_CHARGING */
-	uint8_t battery;
-	bool charging;
 	/* PUB_RELAY_CURRENT (relay = 0 or 1) */
 	float current_avg_a;
 	float current_latest_a;
