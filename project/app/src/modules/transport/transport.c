@@ -619,9 +619,6 @@ static void publish_initial_relay_states(void)
 	publish_relay(1, relay_get(1));
 }
 
-/* Send a fresh battery report on connect so the cloud has up-to-date data. */
-extern void battery_monitor_force_report(void);
-
 static void disconnected_entry(void *o)
 {
 	struct s_object *user_object = o;
@@ -661,7 +658,6 @@ static void connected_entry(void *o)
 	publish_online();
 	publish_fw_version();
 	publish_initial_relay_states();
-	battery_monitor_force_report();
 }
 
 static enum smf_state_result connected_run(void *o)

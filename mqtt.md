@@ -53,16 +53,11 @@ Retained: true
 
 ## 2. Battery Voltage — `{imei}/bat1`, `{imei}/bat2`
 
-The device samples both batteries **once a minute** and publishes whenever
-either voltage has moved by **≥ 0.10 V** since the last published reading.
-Both batteries are always published together (so the cloud can assume that
-between messages the voltage stays within ±0.10 V of the latest payload).
+The device only reports battery voltage when explicitly polled by the cloud
+via a `bat` command (see §9). It does **not** sample periodically and does
+**not** auto-publish on connect — the cloud is in charge of when to ask.
 
-The device also publishes:
-
-- **Immediately on (re)connect to the broker**, so newly-subscribing clients
-  see a current value without waiting for the next change.
-- **On demand** in response to a `bat` command (see §8).
+Both batteries are always published together in response to a poll.
 
 All charging detection / state-of-charge logic lives in the cloud — the
 device only reports voltage.
@@ -269,9 +264,10 @@ Device                                           Broker                Web UI
   |--- PUB {imei}/fw="X.Y.Z"       retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay1="0|1"     retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay2="0|1"     retain=true ---->|--- forward --------->|
-  |--- PUB {imei}/bat1="X.XX" ---------------------->|--- forward --------->|
-  |--- PUB {imei}/bat2="X.XX" ---------------------->|--- forward --------->|
 ```
+
+Note: battery voltages are **not** auto-published on connect; the cloud must
+poll with a `bat` command when it wants a fresh reading.
 
 ### UI Subscribes (any time)
 
@@ -343,7 +339,7 @@ Device                              Broker                          Web UI
   use an arbitrary unique ID.
 - **No streaming mode:** The device does not publish a periodic state bundle.
   Relay state is published on change (and once on connect); battery voltages
-  are published on change (≥ 0.10 V), on connect, and on demand.
+  are published only on demand in response to a `bat` command.
 - **Extensibility:** New command payloads can be added by extending the
   payload-string table above. New telemetry can be added by adding new topics
   under `{imei}/...`.

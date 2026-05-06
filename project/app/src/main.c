@@ -74,7 +74,6 @@ int main(void)
 	relays_init();
 	sense_init();
 	buttons_init(on_button_pressed, on_button_long_pressed);
-	battery_monitor_init();
 	relay_current_init();
 
 	while (!zbus_sub_wait(&main_sub, &chan, K_FOREVER)) {
