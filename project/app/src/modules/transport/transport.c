@@ -12,6 +12,7 @@
  *   {imei}/relay1/current_h               : hourly "avg,latest" amps while relay 1 was on
  *   {imei}/relay2/current_h               : hourly "avg,latest" amps while relay 2 was on
  *   {imei}/status                         : online / offline (LWT)
+ *   {imei}/fw                             : firmware version (retained, on connect)
  */
 
 #include <zephyr/kernel.h>
@@ -67,6 +68,7 @@ static char anchor_alarm_topic[sizeof(client_id) + sizeof("/anchor-alarm")];
 static char pair_topic[sizeof(client_id) + sizeof("/pair")];
 static char relay1_current_topic[sizeof(client_id) + sizeof("/relay1/current_h")];
 static char relay2_current_topic[sizeof(client_id) + sizeof("/relay2/current_h")];
+static char fw_topic[sizeof(client_id) + sizeof("/fw")];
 
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
@@ -157,7 +159,8 @@ static int topics_build(void)
 	    snprintk(anchor_alarm_topic, sizeof(anchor_alarm_topic), "%s/anchor-alarm", client_id) >= sizeof(anchor_alarm_topic) ||
 	    snprintk(pair_topic, sizeof(pair_topic), "%s/pair", client_id) >= sizeof(pair_topic) ||
 	    snprintk(relay1_current_topic, sizeof(relay1_current_topic), "%s/relay1/current_h", client_id) >= sizeof(relay1_current_topic) ||
-	    snprintk(relay2_current_topic, sizeof(relay2_current_topic), "%s/relay2/current_h", client_id) >= sizeof(relay2_current_topic)) {
+	    snprintk(relay2_current_topic, sizeof(relay2_current_topic), "%s/relay2/current_h", client_id) >= sizeof(relay2_current_topic) ||
+	    snprintk(fw_topic, sizeof(fw_topic), "%s/fw", client_id) >= sizeof(fw_topic)) {
 		return -EMSGSIZE;
 	}
 	return 0;
@@ -222,6 +225,13 @@ static void publish_battery(float bat1_v, float bat2_v)
 static void publish_online(void)
 {
 	mqtt_publish_msg(status_topic, (uint8_t *)"online", 6,
+			 MQTT_QOS_1_AT_LEAST_ONCE, true);
+}
+
+static void publish_fw_version(void)
+{
+	const char *ver = CONFIG_MEMFAULT_NCS_FW_VERSION;
+	mqtt_publish_msg(fw_topic, (const uint8_t *)ver, strlen(ver),
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
@@ -649,6 +659,7 @@ static void connected_entry(void *o)
 
 	subscribe_cmd();
 	publish_online();
+	publish_fw_version();
 	publish_initial_relay_states();
 	battery_monitor_force_report();
 }

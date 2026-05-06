@@ -24,6 +24,7 @@ All topics are prefixed with the device IMEI number. There are **two relays**
 | `{imei}/relay1/current_h` | Device → Server | 1 | No       | Hourly relay 1 current — `"avg,latest"` (A)  |
 | `{imei}/relay2/current_h` | Device → Server | 1 | No       | Hourly relay 2 current — `"avg,latest"` (A)  |
 | `{imei}/status`       | Device → Broker  | 1   | Yes      | `"online"` / `"offline"` (LWT)               |
+| `{imei}/fw`           | Device → Server  | 1   | Yes      | Firmware version, e.g. `"0.1.1"` (on connect) |
 
 All payloads are plain UTF-8 strings — no JSON.
 
@@ -157,7 +158,28 @@ Payload:  3.45,3.21
 
 ---
 
-## 7. Pairing — `{imei}/pair`
+## 7. Firmware Version — `{imei}/fw`
+
+Published once by the device immediately after (re)connecting to the broker so
+that any subscribing client knows which firmware version is currently running.
+Retained, so newly-subscribing clients receive the value without waiting.
+
+- **Payload:** Version string, e.g. `"0.1.1"` (sourced from
+  `CONFIG_MEMFAULT_NCS_FW_VERSION`)
+- **Retained:** Yes
+- **QoS:** 1
+
+Example:
+
+```
+Topic:    862345678901234/fw
+Payload:  0.1.1
+Retained: true
+```
+
+---
+
+## 8. Pairing — `{imei}/pair`
 
 Published by the device when **BTN0 is held for 3 seconds**. The intended use is
 to let a web/app client put itself into pairing mode and bind to the device.
@@ -176,7 +198,7 @@ Retained: false
 
 ---
 
-## 8. Commands — `{imei}/cmd/#`
+## 9. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.
@@ -244,6 +266,7 @@ Device                                           Broker                Web UI
   |--- CONNECT (LWT: status=offline) -------------->|                       |
   |--- SUB {imei}/cmd/# ----------------------------|                       |
   |--- PUB {imei}/status="online"  retain=true ---->|--- forward --------->|
+  |--- PUB {imei}/fw="X.Y.Z"       retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay1="0|1"     retain=true ---->|--- forward --------->|
   |--- PUB {imei}/relay2="0|1"     retain=true ---->|--- forward --------->|
   |--- PUB {imei}/bat1="X.XX" ---------------------->|--- forward --------->|
