@@ -371,6 +371,9 @@ static void handle_cmd_payload(const char *data, size_t len)
 	} else if (len == 11 && memcmp(data, "fota_update", 11) == 0) {
 		cmd.action = CMD_FOTA_UPDATE;
 		dispatch_command(&cmd);
+	} else if (len == 6 && memcmp(data, "reboot", 6) == 0) {
+		cmd.action = CMD_REBOOT;
+		dispatch_command(&cmd);
 	} else if (len > 13 && memcmp(data, "anchor-alarm ", 13) == 0) {
 		char num_buf[12];
 		size_t num_len = len - 13;

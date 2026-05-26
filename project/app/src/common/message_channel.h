@@ -34,6 +34,7 @@ enum cmd_action {
 	CMD_REQUEST_GPS,
 	CMD_SET_ANCHOR_ALARM, /* distance_m, 0 = clear */
 	CMD_FOTA_UPDATE,
+	CMD_REBOOT,
 };
 
 struct command {

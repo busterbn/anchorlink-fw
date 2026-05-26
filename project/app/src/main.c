@@ -93,6 +93,11 @@ int main(void)
 		case CMD_REPORT_BAT:
 			handle_report_bat();
 			break;
+		case CMD_REBOOT:
+			LOG_INF("Reboot requested via MQTT");
+			k_sleep(K_SECONDS(2));
+			sys_reboot(SYS_REBOOT_COLD);
+			break;
 		default:
 			/* Other commands handled by other subscribers (gps). */
 			break;
