@@ -298,7 +298,7 @@ static int format_amps(char *buf, size_t size, float v)
 		int_part += 1;
 		frac_part -= 100;
 	}
-	return snprintk(buf, size, "%u.%02u", int_part, frac_part);
+	return snprintk(buf, size, "%u.%02u", int_part % 10000, frac_part % 100);
 }
 
 static void publish_relay_current(uint8_t idx, float avg_a, float latest_a)
