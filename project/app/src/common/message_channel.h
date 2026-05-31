@@ -28,6 +28,12 @@ enum network_status {
 	NETWORK_CONNECTED,
 };
 
+/* End-to-end MQTT broker reachability, watched by the watchdog. */
+enum connection_status {
+	CONNECTION_DOWN,
+	CONNECTION_UP,
+};
+
 enum cmd_action {
 	CMD_TOGGLE_RELAY,   /* relay = 0 or 1 */
 	CMD_REPORT_BAT,
@@ -70,7 +76,7 @@ struct publish_event {
 	float current_latest_a;
 };
 
-ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN);
+ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN, CONNECTION_CHAN);
 
 #ifdef __cplusplus
 }

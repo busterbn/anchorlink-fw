@@ -16,6 +16,7 @@
  */
 
 #include <zephyr/kernel.h>
+#include <errno.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/smf.h>
@@ -552,14 +553,46 @@ static void prepare_fds(void)
 
 static void mqtt_poll_loop(void)
 {
+	/* If the broker hasn't sent us anything (not even a PINGRESP) for
+	 * 1.5x the keepalive interval, the connection is silently dead, e.g.
+	 * the carrier NAT mapping expired. Treat it as a disconnect so we
+	 * reconnect instead of spinning forever as "connected".
+	 */
+	const int64_t dead_after_ms = (int64_t)CONFIG_MQTT_KEEPALIVE * 1500;
+	int64_t last_rx = k_uptime_get();
+
 	while (mqtt_connected) {
 		int timeout = mqtt_keepalive_time_left(&client);
 		int ret = poll(fds, nfds, (timeout > 0) ? timeout : 1000);
 
-		if (ret > 0 && (fds[0].revents & POLLIN)) {
-			mqtt_input(&client);
+		if (ret < 0) {
+			LOG_ERR("poll() error: %d", errno);
+			break;
 		}
-		mqtt_live(&client);
+		if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			LOG_WRN("Socket error (revents 0x%x), dropping connection",
+				fds[0].revents);
+			break;
+		}
+		if ((ret > 0) && (fds[0].revents & POLLIN)) {
+			if (mqtt_input(&client) != 0) {
+				LOG_WRN("mqtt_input failed, dropping connection");
+				break;
+			}
+			last_rx = k_uptime_get();
+		}
+
+		int err = mqtt_live(&client);
+		if (err != 0 && err != -EAGAIN) {
+			LOG_WRN("mqtt_live error: %d, dropping connection", err);
+			break;
+		}
+
+		if ((k_uptime_get() - last_rx) > dead_after_ms) {
+			LOG_WRN("No data from broker for >%lld ms, connection dead",
+				dead_after_ms);
+			break;
+		}
 	}
 }
 
@@ -569,7 +602,19 @@ static struct k_thread poll_thread;
 static void poll_thread_fn(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1); ARG_UNUSED(p2); ARG_UNUSED(p3);
+
 	mqtt_poll_loop();
+
+	/* If we left the loop while still flagged "connected", it was an error
+	 * we detected (dead socket / NAT timeout), not an orderly shutdown.
+	 * Force the connection down and tell the state machine to reconnect.
+	 */
+	if (mqtt_connected) {
+		mqtt_connected = false;
+		mqtt_abort(&client);
+		struct transport_event event = { .type = DISCONNECTED };
+		zbus_chan_pub(&TRANSPORT_PRIVATE_CHANNEL, &event, K_SECONDS(1));
+	}
 }
 
 static void connect_work_fn(struct k_work *work)
@@ -622,6 +667,11 @@ static void publish_initial_relay_states(void)
 	publish_relay(1, relay_get(1));
 }
 
+static void publish_connection_status(enum connection_status status)
+{
+	zbus_chan_pub(&CONNECTION_CHAN, &status, K_SECONDS(1));
+}
+
 static void disconnected_entry(void *o)
 {
 	struct s_object *user_object = o;
@@ -654,6 +704,8 @@ static void connected_entry(void *o)
 	LOG_INF("Connected to MQTT broker");
 	LOG_INF("Hostname: %s", CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME);
 	LOG_INF("Client ID: %s", client_id);
+
+	publish_connection_status(CONNECTION_UP);
 
 	k_work_cancel_delayable(&connect_work);
 
@@ -706,6 +758,7 @@ static void connected_exit(void *o)
 {
 	ARG_UNUSED(o);
 	LOG_INF("Disconnected from MQTT broker");
+	publish_connection_status(CONNECTION_DOWN);
 }
 
 static const struct smf_state state[] = {
