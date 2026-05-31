@@ -70,6 +70,10 @@ static void fota_thread(void)
 		/* No periodic check: only re-check when an MQTT "fota_update"
 		 * command releases the trigger. */
 		k_sem_take(&fota_trigger, K_FOREVER);
+
+		/* Command-triggered: tell the user we're starting. */
+		struct publish_event ev = { .type = PUB_FOTA_STATUS };
+		zbus_chan_pub(&PUBLISH_CHAN, &ev, K_SECONDS(1));
 	}
 }
 

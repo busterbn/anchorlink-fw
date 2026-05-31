@@ -70,6 +70,7 @@ static char pair_topic[sizeof(client_id) + sizeof("/pair")];
 static char relay1_current_topic[sizeof(client_id) + sizeof("/relay1/current_h")];
 static char relay2_current_topic[sizeof(client_id) + sizeof("/relay2/current_h")];
 static char fw_topic[sizeof(client_id) + sizeof("/fw")];
+static char fota_topic[sizeof(client_id) + sizeof("/fota")];
 
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
@@ -161,7 +162,8 @@ static int topics_build(void)
 	    snprintk(pair_topic, sizeof(pair_topic), "%s/pair", client_id) >= sizeof(pair_topic) ||
 	    snprintk(relay1_current_topic, sizeof(relay1_current_topic), "%s/relay1/current_h", client_id) >= sizeof(relay1_current_topic) ||
 	    snprintk(relay2_current_topic, sizeof(relay2_current_topic), "%s/relay2/current_h", client_id) >= sizeof(relay2_current_topic) ||
-	    snprintk(fw_topic, sizeof(fw_topic), "%s/fw", client_id) >= sizeof(fw_topic)) {
+	    snprintk(fw_topic, sizeof(fw_topic), "%s/fw", client_id) >= sizeof(fw_topic) ||
+	    snprintk(fota_topic, sizeof(fota_topic), "%s/fota", client_id) >= sizeof(fota_topic)) {
 		return -EMSGSIZE;
 	}
 	return 0;
@@ -234,6 +236,12 @@ static void publish_fw_version(void)
 	const char *ver = CONFIG_MEMFAULT_NCS_FW_VERSION;
 	mqtt_publish_msg(fw_topic, (const uint8_t *)ver, strlen(ver),
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
+}
+
+static void publish_fota_status(void)
+{
+	mqtt_publish_msg(fota_topic, (const uint8_t *)"updating", 8,
+			 MQTT_QOS_1_AT_LEAST_ONCE, false);
 }
 
 /* Format a signed coordinate with 6 decimal places without using %f.
@@ -747,6 +755,9 @@ static enum smf_state_result connected_run(void *o)
 			publish_relay_current(user_object->pub.relay,
 					      user_object->pub.current_avg_a,
 					      user_object->pub.current_latest_a);
+			break;
+		case PUB_FOTA_STATUS:
+			publish_fota_status();
 			break;
 		}
 	}

@@ -56,6 +56,7 @@ enum publish_event_type {
 	PUB_ANCHOR_ALARM,
 	PUB_PAIR,
 	PUB_RELAY_CURRENT,
+	PUB_FOTA_STATUS,
 };
 
 struct publish_event {
