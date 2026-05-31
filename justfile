@@ -82,6 +82,42 @@ mqtt-fota-update:
     echo "Fota update failed to start"
     exit 1
 
+# Measure the carrier NAT timeout: probe with growing silent gaps until downlink stops arriving
+mqtt-nat-test:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    IMEI=359404230194475
+    CREDS=(-s -u macbook -pw '***REMOVED***')
+    OUT=$(mktemp)
+    SUB_PID=""
+    trap 'if [ -n "$SUB_PID" ]; then kill "$SUB_PID" 2>/dev/null; fi; rm -f "$OUT"' EXIT
+    mqtt sub "${CREDS[@]}" -t "$IMEI/bat1" >"$OUT" 2>/dev/null &
+    SUB_PID=$!
+    sleep 2
+    probe() {  # 0 if the device answers a bat request within 20s (downlink reached it)
+        : > "$OUT"
+        mqtt pub "${CREDS[@]}" -t "$IMEI/cmd/x" -m 'bat' >/dev/null 2>&1
+        for _ in $(seq 1 40); do [ -s "$OUT" ] && return 0; sleep 0.5; done
+        return 1
+    }
+    echo "Baseline probe (resets NAT timer)..."
+    probe || { echo "Device not answering at all — is it online?"; exit 1; }
+    echo "  alive."
+    prev=0
+    for gap in 5 8 11 14 17 20 23 26 30; do
+        echo "Silent for ${gap} min..."; sleep $((gap*60))
+        if probe; then
+            echo "  still alive after ${gap} min silence"; prev=$gap
+        else
+            echo ""
+            echo "==> No downlink after ${gap} min silence."
+            echo "==> NAT window is between ${prev} and ${gap} min."
+            echo "==> Suggested keepalive: ~$((prev*48))s (80% of last-good ${prev} min)"
+            exit 0
+        fi
+    done
+    echo "Survived 30 min silence — NAT window >30 min."
+
 # Run a debugserver and RTT logging
 run:
     just run-{{WEST_RUNNER}}

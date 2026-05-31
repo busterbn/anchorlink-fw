@@ -1,0 +1,8 @@
+config APP_FOTA_CHECK_INTERVAL_MINUTES
+	int "Periodic FOTA check interval in minutes (0 = only boot + fota_update command)"
+	default 0
+	help
+	  How often the device polls Memfault for a new firmware release, on top
+	  of the check at boot and on an MQTT "fota_update" command. 0 disables
+	  periodic checks. A non-zero value is a safety net so a remote device can
+	  always pick up a recovery build even if MQTT is wedged.
