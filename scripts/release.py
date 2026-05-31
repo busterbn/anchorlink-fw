@@ -86,6 +86,12 @@ def main():
     original_conf = PRJ_CONF.read_text()
     write_version(new_version)
 
+    run("git", "add", "-A")
+    run("git", "commit", "-m", f"Release version {new_version}")
+    run("git", "tag", "-a", f"v{new_version}", "-m", f"Release v{new_version}")
+    run("git", "push")
+    run("git", "push", "--tags")
+
     try:
         run("just", "build", "-p")
 
