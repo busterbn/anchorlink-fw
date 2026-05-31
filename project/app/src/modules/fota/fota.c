@@ -10,7 +10,6 @@ LOG_MODULE_REGISTER(fota, LOG_LEVEL_INF);
 
 ZBUS_SUBSCRIBER_DEFINE(fota, 4);
 
-#define OTA_CHECK_INTERVAL K_HOURS(24)
 #define POST_CONNECT_SETTLE K_SECONDS(10)
 
 /* Released by an MQTT "fota_update" command to trigger an immediate check. */
@@ -68,9 +67,9 @@ static void fota_thread(void)
 
 	while (1) {
 		do_fota_check();
-		/* Sleep until the next periodic check, OR until a manual
-		 * trigger releases the semaphore early. */
-		k_sem_take(&fota_trigger, OTA_CHECK_INTERVAL);
+		/* No periodic check: only re-check when an MQTT "fota_update"
+		 * command releases the trigger. */
+		k_sem_take(&fota_trigger, K_FOREVER);
 	}
 }
 
