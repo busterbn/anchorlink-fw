@@ -51,6 +51,17 @@ flash:
 reset:
     pyocd reset --target nrf91
 
+mqtt-sub:
+    mqtt sub -s -u macbook -pw '***REMOVED***' -t '#' -T
+
+mqtt-update:
+
+mqtt-bat:
+    mqtt pub -s -u macbook -pw '***REMOVED***' -t '359404230194475/cmd/bat' -m 'bat'
+
+mqtt-fota-update:
+    mqtt pub -s -u macbook -pw '***REMOVED***' -t '359404230194475/cmd/foo' -m 'fota_update'
+
 # Run a debugserver and RTT logging
 run:
     just run-{{WEST_RUNNER}}
