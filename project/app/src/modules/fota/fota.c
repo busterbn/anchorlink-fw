@@ -65,18 +65,15 @@ static void fota_thread(void)
 	wait_for_network_up();
 	k_sleep(POST_CONNECT_SETTLE);
 
-	const int interval_min = CONFIG_APP_FOTA_CHECK_INTERVAL_MINUTES;
-	const k_timeout_t wait = (interval_min > 0) ? K_MINUTES(interval_min) : K_FOREVER;
-
 	while (1) {
 		do_fota_check();
-		/* Re-check on an MQTT "fota_update" command, or periodically if a
-		 * non-zero interval is configured (safety net for remote units). */
-		if (k_sem_take(&fota_trigger, wait) == 0) {
-			/* Command-triggered: tell the user we're starting. */
-			struct publish_event ev = { .type = PUB_FOTA_STATUS };
-			zbus_chan_pub(&PUBLISH_CHAN, &ev, K_SECONDS(1));
-		}
+		/* No periodic check: only re-check when an MQTT "fota_update"
+		 * command releases the trigger. */
+		k_sem_take(&fota_trigger, K_FOREVER);
+
+		/* Command-triggered: tell the user we're starting. */
+		struct publish_event ev = { .type = PUB_FOTA_STATUS };
+		zbus_chan_pub(&PUBLISH_CHAN, &ev, K_SECONDS(1));
 	}
 }
 
