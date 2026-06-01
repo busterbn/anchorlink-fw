@@ -516,8 +516,10 @@ static int mqtt_client_setup(void)
 	client.client_id.utf8 = (uint8_t *)client_id;
 	client.client_id.size = strlen(client_id);
 
-	username.utf8 = (uint8_t *)CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME;
-	username.size = strlen(CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_USERNAME);
+	/* Use the device IMEI (same as client_id) as the username, so a whole
+	 * fleet can share one firmware image yet authenticate as distinct users. */
+	username.utf8 = (uint8_t *)client_id;
+	username.size = strlen(client_id);
 	client.user_name = &username;
 
 	password.utf8 = (uint8_t *)CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_PASSWORD;
