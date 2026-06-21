@@ -1,0 +1,18 @@
+[Unit]
+Description=Onomondo SIM traffic capture (daily pcap rotation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bn
+Group=bn
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/bn/anchorlink-fw/scripts/onomondo-capture.sh
+Restart=on-failure
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

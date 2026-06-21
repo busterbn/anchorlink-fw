@@ -24,3 +24,5 @@ __pycache__/
 /project/app/src/network/provisioning_ui_html.h
 notebooks/
 AGENTS.md
+# Captured Onomondo traffic
+/captures/

@@ -126,6 +126,22 @@ init:
     west config build.guess-dir runners
 
 
+# Stop the Onomondo traffic capture service
+onomondo-stop:
+    sudo systemctl stop onomondo-capture.service
+
+# Restart the Onomondo traffic capture service
+onomondo-restart:
+    sudo systemctl restart onomondo-capture.service
+
+# Show the Onomondo capture service status
+onomondo-status:
+    systemctl status onomondo-capture.service
+
+# Follow the Onomondo capture service log
+onomondo-log:
+    journalctl -u onomondo-capture.service -f
+
 [private]
 west-setup:
     just west config build.board {{BOARD}}
