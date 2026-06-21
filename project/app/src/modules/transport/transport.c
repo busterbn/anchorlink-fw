@@ -26,6 +26,7 @@
 #include <zephyr/posix/netdb.h>
 #include <zephyr/posix/arpa/inet.h>
 #include <zephyr/random/random.h>
+#include <zephyr/dfu/mcuboot.h>
 
 #include <zephyr/shell/shell.h>
 
@@ -714,6 +715,19 @@ static void connected_entry(void *o)
 	LOG_INF("Connected to MQTT broker");
 	LOG_INF("Hostname: %s", CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME);
 	LOG_INF("Client ID: %s", client_id);
+
+	/* A successful MQTT connect proves this image is healthy. Confirm it so
+	 * MCUboot keeps it permanently; otherwise the next reboot reverts to the
+	 * previous image. An image that can't connect is intentionally left
+	 * unconfirmed so it gets rolled back. */
+	if (!boot_is_img_confirmed()) {
+		int err = boot_write_img_confirmed();
+		if (err) {
+			LOG_ERR("Failed to confirm image: %d", err);
+		} else {
+			LOG_INF("Image confirmed");
+		}
+	}
 
 	publish_connection_status(CONNECTION_UP);
 
