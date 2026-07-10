@@ -82,9 +82,6 @@ mqtt-fota-update:
     echo "Fota update failed to start"
     exit 1
 
-# Run a debugserver and RTT logging
-run:
-    just run-{{WEST_RUNNER}}
 
 # Run west from the virtual environment
 west *args:
@@ -92,14 +89,7 @@ west *args:
     [ -e .venv/bin/activate ] || (echo "venv not found, run just init" && exit 1)
     . .venv/bin/activate && west "$@"
 
-debug *args:
-    just west debug -d {{BUILD_DIR}} -r {{ WEST_RUNNER }} {{ WEST_RUNNER_ARGS }} "$@"
 
-rtt:
-    just west rtt -r {{WEST_RUNNER}} {{WEST_RUNNER_ARGS}}
-
-provision *args:
-    .venv/bin/python3 scripts/cred_import.py "$@"
 
 # Cut a Memfault release. Use --patch / --minor / --major to pick the bump.
 release *args:

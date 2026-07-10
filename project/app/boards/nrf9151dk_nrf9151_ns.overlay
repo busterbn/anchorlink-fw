@@ -1,0 +1,109 @@
+/*
+ * Overlay for the Nordic nRF9151 DK.
+ *
+ * The DK has none of the AnchorLink carrier-board hardware (relays, sense
+ * dividers, current shunts). This overlay only provides the devicetree nodes
+ * the application expects so it builds and runs for connectivity testing.
+ * The chosen GPIO/ADC pins are arbitrary placeholders — nothing is wired up.
+ *
+ * Buttons, watchdog0 and the &adc node already exist in the DK board files.
+ */
+
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/adc/nrf-adc.h>
+
+/ {
+	relays {
+		compatible = "gpio-leds";
+		relay0: relay_0 {
+			gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;
+			label = "REL0_EN";
+		};
+		relay1: relay_1 {
+			gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
+			label = "REL1_EN";
+		};
+	};
+
+	sense_enables {
+		compatible = "gpio-leds";
+		vbat_en: vbat_en {
+			gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+			label = "VBAT_SENSE_EN";
+		};
+		vbat2_en: vbat2_en {
+			gpios = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+			label = "VBAT2_SENSE_EN";
+		};
+		ignition_en: ignition_en {
+			gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
+			label = "IGNITION_SENSE_EN";
+		};
+	};
+
+	zephyr,user {
+		/* ADC channels: 0=REL0_SENSE, 1=REL1_SENSE, 2=VBAT_SENSE, 3=VBAT2_SENSE, 4=IGNITION_SENSE */
+		io-channels = <&adc 0>, <&adc 1>, <&adc 2>, <&adc 3>, <&adc 4>;
+	};
+
+	aliases {
+		relay0 = &relay0;
+		relay1 = &relay1;
+	};
+};
+
+&adc {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN1>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <8>;
+	};
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <8>;
+	};
+
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN3>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <8>;
+	};
+
+	channel@3 {
+		reg = <3>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN4>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <8>;
+	};
+
+	channel@4 {
+		reg = <4>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <NRF_SAADC_AIN5>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <8>;
+	};
+};
