@@ -21,6 +21,7 @@ add_subdirectory(src/modules/transport)
 add_subdirectory(src/modules/error)
 add_subdirectory(src/modules/fota)
 add_subdirectory(src/modules/watchdog)
+add_subdirectory(src/modules/button4)
 
 # Optional modules
 add_subdirectory_ifdef(CONFIG_MQTT_SAMPLE_LED src/modules/led)

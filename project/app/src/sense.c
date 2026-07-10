@@ -73,7 +73,7 @@ static const struct gpio_dt_spec *en_for(enum sense_channel ch)
 	switch (ch) {
 	case SENSE_VBAT:     return &vbat_en;
 	case SENSE_VBAT2:    return &vbat2_en;
-	case SENSE_IGNITION: return &ignition_en;
+	/* IGNITION: P0.14 is a permanent enable driven in main(), not toggled per read. */
 	default:             return NULL;
 	}
 }

@@ -42,7 +42,9 @@
 	};
 
 	zephyr,user {
-		/* ADC channels: 0=REL0_SENSE, 1=REL1_SENSE, 2=VBAT_SENSE, 3=VBAT2_SENSE, 4=IGNITION_SENSE */
+		/* ADC channels: 0=REL0_SENSE, 1=REL1_SENSE, 2=VBAT_SENSE, 3=VBAT2_SENSE, 4=IGNITION_SENSE.
+		 * button4 reads IGNITION_SENSE; on the DK that is AIN5 (P0.18), a
+		 * placeholder — the ~1 V sense circuit only exists on the carrier board. */
 		io-channels = <&adc 0>, <&adc 1>, <&adc 2>, <&adc 3>, <&adc 4>;
 	};
 

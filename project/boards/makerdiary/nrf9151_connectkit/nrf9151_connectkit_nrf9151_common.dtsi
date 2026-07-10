@@ -66,7 +66,9 @@
 	};
 
 	zephyr,user {
-		/* ADC channels: 0=REL0_SENSE, 1=REL1_SENSE, 2=VBAT_SENSE, 3=VBAT2_SENSE, 4=IGNITION_SENSE */
+		/* ADC channels: 0=REL0_SENSE, 1=REL1_SENSE, 2=VBAT_SENSE, 3=VBAT2_SENSE, 4=IGNITION_SENSE.
+		 * IGNITION_SENSE (P0.15/AIN2) doubles as the button4 input, read as an
+		 * analog threshold since the signal only reaches ~1 V. */
 		io-channels = <&adc 0>, <&adc 1>, <&adc 2>, <&adc 3>, <&adc 4>;
 	};
 

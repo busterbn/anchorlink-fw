@@ -1,6 +1,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
+#include <zephyr/drivers/gpio.h>
 
 #include "message_channel.h"
 #include "relays.h"
@@ -10,6 +11,9 @@
 #include "relay_current.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
+
+/* P0.14: kept permanently active from boot. */
+static const struct gpio_dt_spec ignition_en = GPIO_DT_SPEC_GET(DT_NODELABEL(ignition_en), gpios);
 
 ZBUS_SUBSCRIBER_DEFINE(main_sub, 4);
 
@@ -70,11 +74,16 @@ int main(void)
 	const struct zbus_channel *chan;
 
 	LOG_INF("Boat Monitor starting");
+	LOG_INF("Firmware version: %s", CONFIG_MEMFAULT_NCS_FW_VERSION);
 
 	relays_init();
 	sense_init();
 	buttons_init(on_button_pressed, on_button_long_pressed);
 	relay_current_init();
+
+	/* P0.14 stays permanently active. Done after sense_init(), which would
+	 * otherwise leave the ignition_en pin inactive. */
+	gpio_pin_configure_dt(&ignition_en, GPIO_OUTPUT_ACTIVE);
 
 	while (!zbus_sub_wait(&main_sub, &chan, K_FOREVER)) {
 		if (chan != &CMD_CHAN) {
