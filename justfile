@@ -132,6 +132,22 @@ onomondo-status:
 onomondo-log:
     journalctl -u onomondo-capture.service -f
 
+# Stop the MQTT traffic logging service
+mqtt-stop:
+    sudo systemctl stop mqtt-capture.service
+
+# Restart the MQTT traffic logging service
+mqtt-restart:
+    sudo systemctl restart mqtt-capture.service
+
+# Show the MQTT logging service status
+mqtt-status:
+    systemctl status mqtt-capture.service
+
+# Follow the MQTT logging service log
+mqtt-log:
+    journalctl -u mqtt-capture.service -f
+
 [private]
 west-setup:
     just west config build.board {{BOARD}}

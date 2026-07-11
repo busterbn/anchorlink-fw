@@ -1,0 +1,17 @@
+[Unit]
+Description=MQTT broker traffic logger (daily file rotation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bn
+Group=bn
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/bn/anchorlink-fw/scripts/mqtt-capture.sh
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
