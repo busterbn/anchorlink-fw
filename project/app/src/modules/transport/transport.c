@@ -551,6 +551,13 @@ static int mqtt_client_setup(void)
 	tls->sec_tag_list = sec_tags;
 	tls->sec_tag_count = ARRAY_SIZE(sec_tags);
 	tls->hostname = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME;
+	/* Enable TLS session resumption. The modem caches the TLS session and
+	 * resumes it on reconnect to the same host, skipping the full handshake
+	 * (server cert exchange). On the constrained cellular link this turns a
+	 * multi-KB, multi-second handshake into a tiny one, so reconnects are far
+	 * less likely to hit the broker's ~60s connect timeout. Maps to the modem
+	 * TLS_SESSION_CACHE / NRF_SO_SEC_SESSION_CACHE socket option. */
+	tls->session_cache = TLS_SESSION_CACHE_ENABLED;
 
 	return 0;
 }

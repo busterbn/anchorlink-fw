@@ -63,17 +63,21 @@ static void fota_thread(void)
 {
 	LOG_INF("Waiting for network");
 	wait_for_network_up();
-	k_sleep(POST_CONNECT_SETTLE);
 
 	while (1) {
-		do_fota_check();
-		/* No periodic check: only re-check when an MQTT "fota_update"
-		 * command releases the trigger. */
+		/* No automatic check: FOTA runs only when an MQTT "fota_update"
+		 * command releases the trigger. This keeps the extra HTTPS
+		 * connection off the (constrained) cellular link unless a
+		 * firmware update was explicitly requested. */
 		k_sem_take(&fota_trigger, K_FOREVER);
 
 		/* Command-triggered: tell the user we're starting. */
 		struct publish_event ev = { .type = PUB_FOTA_STATUS };
 		zbus_chan_pub(&PUBLISH_CHAN, &ev, K_SECONDS(1));
+
+		/* Let the link settle, then check/download. */
+		k_sleep(POST_CONNECT_SETTLE);
+		do_fota_check();
 	}
 }
 
