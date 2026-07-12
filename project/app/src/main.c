@@ -8,7 +8,6 @@
 #include "sense.h"
 #include "buttons.h"
 #include "battery_monitor.h"
-#include "relay_current.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -79,7 +78,6 @@ int main(void)
 	relays_init();
 	sense_init();
 	buttons_init(on_button_pressed, on_button_long_pressed);
-	relay_current_init();
 
 	/* P0.14 stays permanently active. Done after sense_init(), which would
 	 * otherwise leave the ignition_en pin inactive. */

@@ -9,8 +9,6 @@
  *   {imei}/cmd/#                          : incoming commands (rel1, rel2, bat,
  *                                           gps, "anchor-alarm <m>", fota_update)
  *   {imei}/pair                           : pairing request ("ready") on BTN0 long press
- *   {imei}/relay1/current_h               : hourly "avg,latest" amps while relay 1 was on
- *   {imei}/relay2/current_h               : hourly "avg,latest" amps while relay 2 was on
  *   {imei}/status                         : online / offline (LWT)
  *   {imei}/fw                             : firmware version (retained, on connect)
  */
@@ -68,8 +66,6 @@ static char status_topic[sizeof(client_id) + sizeof("/status")];
 static char gps_topic[sizeof(client_id) + sizeof("/gps")];
 static char anchor_alarm_topic[sizeof(client_id) + sizeof("/anchor-alarm")];
 static char pair_topic[sizeof(client_id) + sizeof("/pair")];
-static char relay1_current_topic[sizeof(client_id) + sizeof("/relay1/current_h")];
-static char relay2_current_topic[sizeof(client_id) + sizeof("/relay2/current_h")];
 static char fw_topic[sizeof(client_id) + sizeof("/fw")];
 static char fota_topic[sizeof(client_id) + sizeof("/fota")];
 
@@ -161,8 +157,6 @@ static int topics_build(void)
 	    snprintk(gps_topic, sizeof(gps_topic), "%s/gps", client_id) >= sizeof(gps_topic) ||
 	    snprintk(anchor_alarm_topic, sizeof(anchor_alarm_topic), "%s/anchor-alarm", client_id) >= sizeof(anchor_alarm_topic) ||
 	    snprintk(pair_topic, sizeof(pair_topic), "%s/pair", client_id) >= sizeof(pair_topic) ||
-	    snprintk(relay1_current_topic, sizeof(relay1_current_topic), "%s/relay1/current_h", client_id) >= sizeof(relay1_current_topic) ||
-	    snprintk(relay2_current_topic, sizeof(relay2_current_topic), "%s/relay2/current_h", client_id) >= sizeof(relay2_current_topic) ||
 	    snprintk(fw_topic, sizeof(fw_topic), "%s/fw", client_id) >= sizeof(fw_topic) ||
 	    snprintk(fota_topic, sizeof(fota_topic), "%s/fota", client_id) >= sizeof(fota_topic)) {
 		return -EMSGSIZE;
@@ -290,41 +284,6 @@ static void publish_anchor_alarm_msg(uint32_t dist_m)
 static void publish_pair(void)
 {
 	mqtt_publish_msg(pair_topic, (const uint8_t *)"ready", 5,
-			 MQTT_QOS_1_AT_LEAST_ONCE, false);
-}
-
-/* Format a non-negative float "X.XX" without using %f. */
-static int format_amps(char *buf, size_t size, float v)
-{
-	if (v < 0.0f) {
-		v = 0.0f;
-	}
-	if (v > 9999.0f) {
-		v = 9999.0f;
-	}
-	unsigned int int_part = (unsigned int)v;
-	unsigned int frac_part = (unsigned int)((v - int_part) * 100.0f + 0.5f);
-	if (frac_part >= 100) {
-		int_part += 1;
-		frac_part -= 100;
-	}
-	return snprintk(buf, size, "%u.%02u", int_part % 10000, frac_part % 100);
-}
-
-static void publish_relay_current(uint8_t idx, float avg_a, float latest_a)
-{
-	const char *topic = (idx == 0) ? relay1_current_topic : relay2_current_topic;
-	char avg_buf[10];
-	char latest_buf[10];
-	char payload[24];
-
-	format_amps(avg_buf, sizeof(avg_buf), avg_a);
-	format_amps(latest_buf, sizeof(latest_buf), latest_a);
-	int len = snprintk(payload, sizeof(payload), "%s,%s", avg_buf, latest_buf);
-	if (len <= 0 || len >= sizeof(payload)) {
-		return;
-	}
-	mqtt_publish_msg(topic, (const uint8_t *)payload, len,
 			 MQTT_QOS_1_AT_LEAST_ONCE, false);
 }
 
@@ -773,11 +732,6 @@ static enum smf_state_result connected_run(void *o)
 			break;
 		case PUB_PAIR:
 			publish_pair();
-			break;
-		case PUB_RELAY_CURRENT:
-			publish_relay_current(user_object->pub.relay,
-					      user_object->pub.current_avg_a,
-					      user_object->pub.current_latest_a);
 			break;
 		case PUB_FOTA_STATUS:
 			publish_fota_status();

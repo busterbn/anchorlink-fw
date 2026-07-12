@@ -21,8 +21,6 @@ All topics are prefixed with the device IMEI number. There are **two relays**
 | `{imei}/anchor-alarm` | Device → Server  | 1   | No       | Anchor breach distance in meters             |
 | `{imei}/cmd/#`        | Server → Device  | 1   | No       | Commands to the device (any subtopic)        |
 | `{imei}/pair`         | Device → Server  | 1   | No       | Pairing request — `"ready"` (BTN0 long press) |
-| `{imei}/relay1/current_h` | Device → Server | 1 | No       | Hourly relay 1 current — `"avg,latest"` (A)  |
-| `{imei}/relay2/current_h` | Device → Server | 1 | No       | Hourly relay 2 current — `"avg,latest"` (A)  |
 | `{imei}/status`       | Device → Broker  | 1   | Yes      | `"online"` / `"offline"` (LWT)               |
 | `{imei}/fw`           | Device → Server  | 1   | Yes      | Firmware version, e.g. `"0.1.1"` (on connect) |
 
@@ -54,7 +52,7 @@ Retained: true
 ## 2. Battery Voltage — `{imei}/bat1`, `{imei}/bat2`
 
 The device only reports battery voltage when explicitly polled by the cloud
-via a `bat` command (see §9). It does **not** sample periodically and does
+via a `bat` command (see §8). It does **not** sample periodically and does
 **not** auto-publish on connect — the cloud is in charge of when to ask.
 
 Both batteries are always published together in response to a poll.
@@ -123,37 +121,7 @@ monitoring stops automatically.
 
 ---
 
-## 6. Relay Current — `{imei}/relay1/current_h`, `{imei}/relay2/current_h`
-
-When a relay is ON the device samples its current draw every 10 s through a
-10 mΩ shunt sitting between battery 1 and the relay output:
-
-```
-I = (V_bat1 - V_relayX) / 0.010
-```
-
-Once per hour, on the hour (UTC), the device publishes:
-
-- **`avg`** — mean current across all 10 s samples taken during the past hour
-  while the relay was on
-- **`latest`** — the most recent 10 s sample
-
-If a relay was off for the full hour, no message is sent for that relay.
-
-- **Payload:** `"avg,latest"` — both amps, 2 decimals, e.g. `"3.45,3.21"`
-- **Retained:** No
-- **QoS:** 1
-
-Example:
-
-```
-Topic:    862345678901234/relay1/current_h
-Payload:  3.45,3.21
-```
-
----
-
-## 7. Firmware Version — `{imei}/fw`
+## 6. Firmware Version — `{imei}/fw`
 
 Published once by the device immediately after (re)connecting to the broker so
 that any subscribing client knows which firmware version is currently running.
@@ -174,7 +142,7 @@ Retained: true
 
 ---
 
-## 8. Pairing — `{imei}/pair`
+## 7. Pairing — `{imei}/pair`
 
 Published by the device when **BTN0 is held for 3 seconds**. The intended use is
 to let a web/app client put itself into pairing mode and bind to the device.
@@ -193,7 +161,7 @@ Retained: false
 
 ---
 
-## 9. Commands — `{imei}/cmd/#`
+## 8. Commands — `{imei}/cmd/#`
 
 The device subscribes to `{imei}/cmd/#` (wildcard — any subtopic under `cmd`).
 The exact subtopic is not significant; the device acts on the **payload** only.

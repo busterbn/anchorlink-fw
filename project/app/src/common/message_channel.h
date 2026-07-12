@@ -55,7 +55,6 @@ enum publish_event_type {
 	PUB_GPS,
 	PUB_ANCHOR_ALARM,
 	PUB_PAIR,
-	PUB_RELAY_CURRENT,
 	PUB_FOTA_STATUS,
 };
 
@@ -72,9 +71,6 @@ struct publish_event {
 	double longitude;
 	/* PUB_ANCHOR_ALARM */
 	uint32_t distance_m;
-	/* PUB_RELAY_CURRENT (relay = 0 or 1) */
-	float current_avg_a;
-	float current_latest_a;
 };
 
 ZBUS_CHAN_DECLARE(NETWORK_CHAN, FATAL_ERROR_CHAN, CMD_CHAN, PUBLISH_CHAN, CONNECTION_CHAN);
