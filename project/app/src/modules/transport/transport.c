@@ -33,6 +33,7 @@
 
 #include "client_id.h"
 #include "message_channel.h"
+#include "relays.h"
 
 LOG_MODULE_REGISTER(transport, CONFIG_MQTT_SAMPLE_TRANSPORT_LOG_LEVEL);
 
@@ -662,7 +663,6 @@ static void connect_work_fn(struct k_work *work)
 }
 
 /* Send the current relay state for both relays (called on connect). */
-extern bool relay_get(uint8_t idx);
 static void publish_initial_relay_states(void)
 {
 	publish_relay(0, relay_get(0));

@@ -10,7 +10,6 @@
 #include <modem/lte_lc.h>
 
 #include "message_channel.h"
-#include "gps.h"
 
 LOG_MODULE_REGISTER(gps, LOG_LEVEL_INF);
 
@@ -336,8 +335,6 @@ static void gps_thread(void)
 }
 
 K_THREAD_DEFINE(gps_thread_id, 2048, gps_thread, NULL, NULL, NULL, 5, 0, 0);
-
-void gps_init(void) { }
 
 /* ------------------------------------------------------------------ */
 /* Shell commands — same actions the MQTT cmd topic dispatches.       */
