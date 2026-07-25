@@ -57,7 +57,7 @@ mqtt-sub:
 mqtt-update:
 
 mqtt-bat:
-    mqtt pub -s -u macbook -pw '***REMOVED***' -t '359404230194475/cmd/bat' -m 'bat'
+    mqtt pub -s -u macbook -pw '***REMOVED***' -t '359404230194475/cmd/bat' -m '{"cmd":"bat"}'
 
 # Trigger a FOTA update and confirm the device acknowledged it within 5s
 mqtt-fota-update:
@@ -71,7 +71,7 @@ mqtt-fota-update:
     mqtt sub -s -u macbook -pw '***REMOVED***' -t "$IMEI/fota" >"$OUT" 2>/dev/null &
     SUB_PID=$!
     sleep 2  # let the subscription establish
-    mqtt pub -s -u macbook -pw '***REMOVED***' -t "$IMEI/cmd/fota" -m 'fota_update' >/dev/null 2>&1
+    mqtt pub -s -u macbook -pw '***REMOVED***' -t "$IMEI/cmd/fota" -m '{"cmd":"fota_update"}' >/dev/null 2>&1
     for _ in $(seq 1 50); do
         if grep -q updating "$OUT"; then
             echo "Fota update started"

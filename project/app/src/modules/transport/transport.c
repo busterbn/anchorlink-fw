@@ -1,16 +1,18 @@
 /*
  * MQTT transport module using raw Zephyr MQTT client API.
  *
- * Topics:
- *   {imei}/relay1, {imei}/relay2          : retained relay state ("0" / "1")
- *   {imei}/bat1,   {imei}/bat2            : battery voltage ("X.XX")
- *   {imei}/gps                            : on-demand GPS fix ("lat,lon")
- *   {imei}/anchor-alarm                   : anchor alarm (distance in meters)
- *   {imei}/cmd/#                          : incoming commands (rel1, rel2, bat,
- *                                           gps, "anchor-alarm <m>", fota_update)
- *   {imei}/pair                           : pairing request ("ready") on BTN0 long press
- *   {imei}/status                         : online / offline (LWT)
- *   {imei}/fw                             : firmware version (retained, on connect)
+ * All payloads are JSON. Topics:
+ *   {imei}/relay1, {imei}/relay2          : retained relay state {"state":0|1}
+ *   {imei}/bat                            : both batteries {"bat1":X.XX,"bat2":X.XX}
+ *   {imei}/gps                            : on-demand GPS fix {"lat":..,"lon":..}
+ *   {imei}/anchor-alarm                   : anchor alarm {"distance":<m>}
+ *   {imei}/cmd/#                          : incoming commands {"cmd":"rel1"|"rel2"|
+ *                                           "bat"|"gps"|"reboot"|"fota_update"|
+ *                                           "anchor-alarm"} (+ "radius" for anchor)
+ *   {imei}/pair                           : pairing request {"status":"ready"} (BTN0 long press)
+ *   {imei}/status                         : {"status":"online"|"offline"} (LWT)
+ *   {imei}/fw                             : firmware version {"version":"X.Y.Z"} (retained)
+ *   {imei}/fota                           : {"status":"updating"} on FOTA start
  */
 
 #include <zephyr/kernel.h>
@@ -25,6 +27,7 @@
 #include <zephyr/posix/arpa/inet.h>
 #include <zephyr/random/random.h>
 #include <zephyr/dfu/mcuboot.h>
+#include <zephyr/data/json.h>
 
 #include <zephyr/shell/shell.h>
 
@@ -59,8 +62,7 @@ static char client_id[CONFIG_MQTT_SAMPLE_TRANSPORT_CLIENT_ID_BUFFER_SIZE];
 /* Topic buffers */
 static char relay1_topic[sizeof(client_id) + sizeof("/relay1")];
 static char relay2_topic[sizeof(client_id) + sizeof("/relay2")];
-static char bat1_topic[sizeof(client_id) + sizeof("/bat1")];
-static char bat2_topic[sizeof(client_id) + sizeof("/bat2")];
+static char bat_topic[sizeof(client_id) + sizeof("/bat")];
 static char cmd_sub_topic[sizeof(client_id) + sizeof("/cmd/#")];
 static char status_topic[sizeof(client_id) + sizeof("/status")];
 static char gps_topic[sizeof(client_id) + sizeof("/gps")];
@@ -71,7 +73,7 @@ static char fota_topic[sizeof(client_id) + sizeof("/fota")];
 
 static struct mqtt_topic will_topic;
 static struct mqtt_utf8 will_message;
-static uint8_t will_payload[] = "offline";
+static uint8_t will_payload[] = "{\"status\":\"offline\"}";
 
 static struct mqtt_utf8 username;
 static struct mqtt_utf8 password;
@@ -150,8 +152,7 @@ static int topics_build(void)
 {
 	if (snprintk(relay1_topic, sizeof(relay1_topic), "%s/relay1", client_id) >= sizeof(relay1_topic) ||
 	    snprintk(relay2_topic, sizeof(relay2_topic), "%s/relay2", client_id) >= sizeof(relay2_topic) ||
-	    snprintk(bat1_topic,   sizeof(bat1_topic),   "%s/bat1",   client_id) >= sizeof(bat1_topic) ||
-	    snprintk(bat2_topic,   sizeof(bat2_topic),   "%s/bat2",   client_id) >= sizeof(bat2_topic) ||
+	    snprintk(bat_topic,    sizeof(bat_topic),    "%s/bat",    client_id) >= sizeof(bat_topic) ||
 	    snprintk(cmd_sub_topic, sizeof(cmd_sub_topic), "%s/cmd/#", client_id) >= sizeof(cmd_sub_topic) ||
 	    snprintk(status_topic, sizeof(status_topic), "%s/status", client_id) >= sizeof(status_topic) ||
 	    snprintk(gps_topic, sizeof(gps_topic), "%s/gps", client_id) >= sizeof(gps_topic) ||
@@ -192,50 +193,57 @@ static int mqtt_publish_msg(const char *topic, const uint8_t *data, size_t len,
 static void publish_relay(uint8_t idx, bool state)
 {
 	const char *topic = (idx == 0) ? relay1_topic : relay2_topic;
-	const char *payload = state ? "1" : "0";
-	mqtt_publish_msg(topic, (const uint8_t *)payload, 1,
+	char payload[16];
+	int len = snprintk(payload, sizeof(payload), "{\"state\":%d}", state ? 1 : 0);
+	mqtt_publish_msg(topic, (const uint8_t *)payload, len,
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
+}
+
+/* Format a voltage as a bare JSON number "X.XX" without using %f. */
+static int format_voltage(char *buf, size_t size, float v)
+{
+	int int_part = (int)v;
+	int frac_part = (int)((v - int_part) * 100);
+	if (frac_part < 0) { frac_part = -frac_part; }
+	return snprintk(buf, size, "%d.%02d", int_part, frac_part);
 }
 
 static void publish_battery(float bat1_v, float bat2_v)
 {
-	char buf[8];
+	char b1[8];
+	char b2[8];
+	char payload[48];
 
-	int int_part = (int)bat1_v;
-	int frac_part = (int)((bat1_v - int_part) * 100);
-	if (frac_part < 0) { frac_part = -frac_part; }
-	int len = snprintk(buf, sizeof(buf), "%d.%02d", int_part, frac_part);
-	if (len > 0 && len < sizeof(buf)) {
-		mqtt_publish_msg(bat1_topic, (uint8_t *)buf, len,
-				 MQTT_QOS_0_AT_MOST_ONCE, false);
-	}
-
-	int_part = (int)bat2_v;
-	frac_part = (int)((bat2_v - int_part) * 100);
-	if (frac_part < 0) { frac_part = -frac_part; }
-	len = snprintk(buf, sizeof(buf), "%d.%02d", int_part, frac_part);
-	if (len > 0 && len < sizeof(buf)) {
-		mqtt_publish_msg(bat2_topic, (uint8_t *)buf, len,
+	format_voltage(b1, sizeof(b1), bat1_v);
+	format_voltage(b2, sizeof(b2), bat2_v);
+	int len = snprintk(payload, sizeof(payload),
+			   "{\"bat1\":%s,\"bat2\":%s}", b1, b2);
+	if (len > 0 && len < sizeof(payload)) {
+		mqtt_publish_msg(bat_topic, (uint8_t *)payload, len,
 				 MQTT_QOS_0_AT_MOST_ONCE, false);
 	}
 }
 
 static void publish_online(void)
 {
-	mqtt_publish_msg(status_topic, (uint8_t *)"online", 6,
+	const char *payload = "{\"status\":\"online\"}";
+	mqtt_publish_msg(status_topic, (const uint8_t *)payload, strlen(payload),
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
 static void publish_fw_version(void)
 {
-	const char *ver = CONFIG_MEMFAULT_NCS_FW_VERSION;
-	mqtt_publish_msg(fw_topic, (const uint8_t *)ver, strlen(ver),
+	char payload[48];
+	int len = snprintk(payload, sizeof(payload), "{\"version\":\"%s\"}",
+			   CONFIG_MEMFAULT_NCS_FW_VERSION);
+	mqtt_publish_msg(fw_topic, (const uint8_t *)payload, len,
 			 MQTT_QOS_1_AT_LEAST_ONCE, true);
 }
 
 static void publish_fota_status(void)
 {
-	mqtt_publish_msg(fota_topic, (const uint8_t *)"updating", 8,
+	const char *payload = "{\"status\":\"updating\"}";
+	mqtt_publish_msg(fota_topic, (const uint8_t *)payload, strlen(payload),
 			 MQTT_QOS_1_AT_LEAST_ONCE, false);
 }
 
@@ -264,7 +272,7 @@ static void publish_gps(double lat, double lon)
 
 	format_coord(latbuf, sizeof(latbuf), lat);
 	format_coord(lonbuf, sizeof(lonbuf), lon);
-	int len = snprintk(buf, sizeof(buf), "%s,%s", latbuf, lonbuf);
+	int len = snprintk(buf, sizeof(buf), "{\"lat\":%s,\"lon\":%s}", latbuf, lonbuf);
 	if (len > 0 && len < sizeof(buf)) {
 		mqtt_publish_msg(gps_topic, (uint8_t *)buf, len,
 				 MQTT_QOS_0_AT_MOST_ONCE, false);
@@ -273,8 +281,8 @@ static void publish_gps(double lat, double lon)
 
 static void publish_anchor_alarm_msg(uint32_t dist_m)
 {
-	char buf[12];
-	int len = snprintk(buf, sizeof(buf), "%u", dist_m);
+	char buf[28];
+	int len = snprintk(buf, sizeof(buf), "{\"distance\":%u}", dist_m);
 	if (len > 0 && len < sizeof(buf)) {
 		mqtt_publish_msg(anchor_alarm_topic, (uint8_t *)buf, len,
 				 MQTT_QOS_1_AT_LEAST_ONCE, false);
@@ -283,7 +291,8 @@ static void publish_anchor_alarm_msg(uint32_t dist_m)
 
 static void publish_pair(void)
 {
-	mqtt_publish_msg(pair_topic, (const uint8_t *)"ready", 5,
+	const char *payload = "{\"status\":\"ready\"}";
+	mqtt_publish_msg(pair_topic, (const uint8_t *)payload, strlen(payload),
 			 MQTT_QOS_1_AT_LEAST_ONCE, false);
 }
 
@@ -319,49 +328,62 @@ static void dispatch_command(struct command *cmd)
 	}
 }
 
-static void handle_cmd_payload(const char *data, size_t len)
-{
-	struct command cmd = { 0 };
+/* Inbound command JSON, e.g. {"cmd":"rel1"} or
+ * {"cmd":"anchor-alarm","radius":25}. `radius` is only used by anchor-alarm. */
+struct cmd_json {
+	const char *cmd;
+	int32_t radius;
+};
 
-	if (len == 4 && memcmp(data, "rel1", 4) == 0) {
+static const struct json_obj_descr cmd_descr[] = {
+	JSON_OBJ_DESCR_PRIM(struct cmd_json, cmd, JSON_TOK_STRING),
+	JSON_OBJ_DESCR_PRIM(struct cmd_json, radius, JSON_TOK_NUMBER),
+};
+
+/* Parse and dispatch a command. json_obj_parse() tokenizes the buffer in place,
+ * so `data` must be writable (it is — the shared cmd_payload_buf). */
+static void handle_cmd_payload(char *data, size_t len)
+{
+	struct cmd_json parsed = { .cmd = NULL, .radius = -1 };
+	int ret = json_obj_parse(data, len, cmd_descr, ARRAY_SIZE(cmd_descr), &parsed);
+	if (ret < 0 || !(ret & BIT(0)) || parsed.cmd == NULL) {
+		LOG_WRN("Bad command JSON (ret %d)", ret);
+		return;
+	}
+
+	struct command cmd = { 0 };
+	const char *c = parsed.cmd;
+
+	if (strcmp(c, "rel1") == 0) {
 		cmd.action = CMD_TOGGLE_RELAY;
 		cmd.relay = 0;
 		dispatch_command(&cmd);
-	} else if (len == 4 && memcmp(data, "rel2", 4) == 0) {
+	} else if (strcmp(c, "rel2") == 0) {
 		cmd.action = CMD_TOGGLE_RELAY;
 		cmd.relay = 1;
 		dispatch_command(&cmd);
-	} else if (len == 3 && memcmp(data, "bat", 3) == 0) {
+	} else if (strcmp(c, "bat") == 0) {
 		cmd.action = CMD_REPORT_BAT;
 		dispatch_command(&cmd);
-	} else if (len == 3 && memcmp(data, "gps", 3) == 0) {
+	} else if (strcmp(c, "gps") == 0) {
 		cmd.action = CMD_REQUEST_GPS;
 		dispatch_command(&cmd);
-	} else if (len == 11 && memcmp(data, "fota_update", 11) == 0) {
+	} else if (strcmp(c, "fota_update") == 0) {
 		cmd.action = CMD_FOTA_UPDATE;
 		dispatch_command(&cmd);
-	} else if (len == 6 && memcmp(data, "reboot", 6) == 0) {
+	} else if (strcmp(c, "reboot") == 0) {
 		cmd.action = CMD_REBOOT;
 		dispatch_command(&cmd);
-	} else if (len > 13 && memcmp(data, "anchor-alarm ", 13) == 0) {
-		char num_buf[12];
-		size_t num_len = len - 13;
-		if (num_len >= sizeof(num_buf)) {
-			LOG_WRN("anchor-alarm distance too long");
-			return;
-		}
-		memcpy(num_buf, data + 13, num_len);
-		num_buf[num_len] = '\0';
-		long radius = strtol(num_buf, NULL, 10);
-		if (radius < 0) {
-			LOG_WRN("anchor-alarm: negative distance");
+	} else if (strcmp(c, "anchor-alarm") == 0) {
+		if (!(ret & BIT(1)) || parsed.radius < 0) {
+			LOG_WRN("anchor-alarm: missing/negative radius");
 			return;
 		}
 		cmd.action = CMD_SET_ANCHOR_ALARM;
-		cmd.distance_m = (uint32_t)radius;
+		cmd.distance_m = (uint32_t)parsed.radius;
 		dispatch_command(&cmd);
 	} else {
-		LOG_WRN("Unknown command payload (%u bytes)", (unsigned)len);
+		LOG_WRN("Unknown command: %s", c);
 	}
 }
 
