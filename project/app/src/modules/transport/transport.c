@@ -205,13 +205,13 @@ static int format_voltage(char *buf, size_t size, float v)
 	int int_part = (int)v;
 	int frac_part = (int)((v - int_part) * 100);
 	if (frac_part < 0) { frac_part = -frac_part; }
-	return snprintk(buf, size, "%d.%02d", int_part, frac_part);
+	return snprintk(buf, size, "%d.%02u", int_part, (unsigned int)frac_part % 100);
 }
 
 static void publish_battery(float bat1_v, float bat2_v)
 {
-	char b1[8];
-	char b2[8];
+	char b1[16];
+	char b2[16];
 	char payload[48];
 
 	format_voltage(b1, sizeof(b1), bat1_v);
