@@ -528,7 +528,10 @@ static int mqtt_client_setup(void)
 
 	client.transport.type = MQTT_TRANSPORT_SECURE;
 	struct mqtt_sec_config *tls = &client.transport.tls.config;
-	tls->peer_verify = TLS_PEER_VERIFY_NONE;
+	/* The broker's root CA (ISRG Root X1) is provisioned to the sec tag by
+	 * credentials_provision on modem init, so the peer can be fully verified
+	 * against the hostname set below. */
+	tls->peer_verify = TLS_PEER_VERIFY_REQUIRED;
 	tls->sec_tag_list = sec_tags;
 	tls->sec_tag_count = ARRAY_SIZE(sec_tags);
 	tls->hostname = CONFIG_MQTT_SAMPLE_TRANSPORT_BROKER_HOSTNAME;
