@@ -671,6 +671,33 @@ static void publish_connection_status(enum connection_status status)
 	zbus_chan_pub(&CONNECTION_CHAN, &status, K_SECONDS(1));
 }
 
+/* HiveMQ Cloud expires retained messages after ~3 days. A long-lived
+ * connection never re-runs the on-connect publishes, so the retained
+ * status/fw/relay messages silently vanish from the broker and the device
+ * looks offline in the app even though it is connected. Republish them
+ * periodically to stay well under the broker's TTL. */
+#define RETAINED_REFRESH_INTERVAL K_HOURS(12)
+
+static void retained_refresh_work_fn(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(retained_refresh_work, retained_refresh_work_fn);
+
+static void retained_refresh_work_fn(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (!mqtt_connected) {
+		return;
+	}
+
+	LOG_INF("Refreshing retained messages (broker retained-message TTL)");
+	publish_online();
+	publish_fw_version();
+	publish_initial_relay_states();
+
+	k_work_reschedule_for_queue(&transport_queue, &retained_refresh_work,
+				    RETAINED_REFRESH_INTERVAL);
+}
+
 static void disconnected_entry(void *o)
 {
 	struct s_object *user_object = o;
@@ -725,6 +752,11 @@ static void connected_entry(void *o)
 	publish_online();
 	publish_fw_version();
 	publish_initial_relay_states();
+
+	/* Keep the retained state alive on the broker (see
+	 * retained_refresh_work_fn). */
+	k_work_reschedule_for_queue(&transport_queue, &retained_refresh_work,
+				    RETAINED_REFRESH_INTERVAL);
 }
 
 static enum smf_state_result connected_run(void *o)
@@ -768,6 +800,7 @@ static void connected_exit(void *o)
 {
 	ARG_UNUSED(o);
 	LOG_INF("Disconnected from MQTT broker");
+	k_work_cancel_delayable(&retained_refresh_work);
 	publish_connection_status(CONNECTION_DOWN);
 }
 

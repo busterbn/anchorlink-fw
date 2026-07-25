@@ -98,6 +98,11 @@ QoS:      1
 The broker automatically publishes `{"status":"offline"}` if the device loses
 connection.
 
+**Retained refresh:** HiveMQ Cloud expires retained messages after ~3 days, so
+a device that stays connected that long would silently disappear from any UI
+that reads the retained status. The device therefore republishes its retained
+state (`status`, `fw`, `relay1`, `relay2`) every 12 hours while connected.
+
 ---
 
 ## 4. GPS — `{imei}/gps`
@@ -331,6 +336,9 @@ Device                              Broker                          Web UI
 - **No streaming mode:** The device does not publish a periodic state bundle.
   Relay state is published on change (and once on connect); battery voltages
   are published only on demand in response to a `bat` command.
+- **Retained TTL:** The broker (HiveMQ Cloud) drops retained messages after
+  ~3 days. The device refreshes all retained topics every 12 h while
+  connected, so clients can always rely on retained `status`/`fw`/`relay*`.
 - **Extensibility:** New commands can be added by extending the `"cmd"` values in
   the table above (and the parser). New telemetry can be added by adding new
   topics under `{imei}/...`.
