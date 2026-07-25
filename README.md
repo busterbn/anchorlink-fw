@@ -82,6 +82,10 @@ just build     # build for nrf9151_connectkit/nrf9151/ns (sysbuild: MCUboot + TF
 just flash     # full-chip erase + program merged.hex via pyocd
 ```
 
+Broker and Memfault credentials are not in the repository: copy
+[project/app/secrets.conf.example](project/app/secrets.conf.example) to
+`project/app/secrets.conf` and fill in the values before building.
+
 `just build -p` forces a pristine build. Board, build type, and build
 directory are overridable via environment variables (see the justfile).
 

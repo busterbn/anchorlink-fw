@@ -2,33 +2,23 @@ set positional-arguments := true
 
 set dotenv-load := true
 
-# Set build parameters here
-
-
-
+# Build parameters, overridable via environment variables
 export APP := env_var_or_default("APP", "project/app")
 export BOARD := env_var_or_default("BOARD", "nrf9151_connectkit/nrf9151/ns")
-# export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "MinSizeRel") # Set to 'Release' for release builds
-# export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Debug") # Set to 'Release' for release builds
-export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Release") # Set to 'Release' for release builds
+export BUILD_TYPE := env_var_or_default("BUILD_TYPE", "Release")
 export SYSBUILD := env_var_or_default("SYSBUILD", "true")
 export WEST_RUNNER := env_var_or_default("WEST_RUNNER", "jlink")
 export WEST_RUNNER_ARGS := env_var_or_default("WEST_RUNNER_ARGS", "")
 export BUILD_DIR := env_var_or_default("BUILD_DIR", "build/" + BOARD)
 
-DOCKER_IMG_NAME := "cleverplant-builder"
-
 [private]
 @default:
     just --list
 
-# Build the project. Set the BUILD_TYPE variable to `Debug` or `Release`. Defaults to `Debug`
+# Build the project. Set BUILD_TYPE=Debug for a debug build (defaults to Release)
 build *args: west-setup
+    @[ -e {{APP}}/secrets.conf ] || (echo "ERROR: {{APP}}/secrets.conf not found — copy secrets.conf.example next to it and fill in the credentials" && exit 1)
     just west build {{APP}} "$@"
-
-release-build *args: west-setup
-    # echo "Building release"
-    just west build {{APP}} "$@" -- -DEXTRA_CONF_FILE=release.conf
 
 # Open the menuconfig tool
 menuconfig:
@@ -38,40 +28,41 @@ menuconfig:
 clean:
     rm -rf .cache build compile_commands.json
 
-# # Flash from within the docker image
-# flash *args:
-#     just west flash -d {{BUILD_DIR}} -r {{ WEST_RUNNER }} {{ WEST_RUNNER_ARGS }} "$@"
+# Full-chip erase is required when slot0_ns may hold a previous OTA image:
+# merged.hex doesn't fully cover slot0_ns, so a sector-only erase would leave a
+# corrupt image and MCUboot reverts to slot1_ns.
 
-# Flash merged.hex with a full chip erase. Required when slot0_ns may hold a
-# previous OTA image: merged.hex doesn't fully cover slot0_ns, so a sector-only
-# erase leaves a corrupt image and MCUboot reverts to slot1_ns.
+# Flash merged.hex with a full chip erase
 flash:
     pyocd load --erase chip --target nrf91 --frequency 4000000 build/{{BOARD}}/merged.hex
 
+# Reset the target
 reset:
     pyocd reset --target nrf91
 
+# MQTT test clients. Credentials and device IMEI come from .env (dotenv-load).
+
+# Subscribe to every topic on the broker
 mqtt-sub:
-    mqtt sub -s -u macbook -pw '***REMOVED***' -t '#' -T
+    mqtt sub -s -u "${MQTT_CLI_USER:?set MQTT_CLI_USER in .env}" -pw "$MQTT_CLI_PASSWORD" -t '#' -T
 
-mqtt-update:
-
+# Ask the device for a battery report
 mqtt-bat:
-    mqtt pub -s -u macbook -pw '***REMOVED***' -t '359404230194475/cmd/bat' -m '{"cmd":"bat"}'
+    mqtt pub -s -u "${MQTT_CLI_USER:?set MQTT_CLI_USER in .env}" -pw "$MQTT_CLI_PASSWORD" -t "${DEVICE_IMEI:?set DEVICE_IMEI in .env}/cmd/bat" -m '{"cmd":"bat"}'
 
 # Trigger a FOTA update and confirm the device acknowledged it within 5s
 mqtt-fota-update:
     #!/usr/bin/env bash
     set -uo pipefail
-    IMEI=359404230194475
+    IMEI="${DEVICE_IMEI:?set DEVICE_IMEI in .env}"
     OUT=$(mktemp)
     SUB_PID=""
     trap 'if [ -n "$SUB_PID" ]; then kill "$SUB_PID" 2>/dev/null; fi; rm -f "$OUT"' EXIT
     # Listen for the device's "updating" acknowledgement first
-    mqtt sub -s -u macbook -pw '***REMOVED***' -t "$IMEI/fota" >"$OUT" 2>/dev/null &
+    mqtt sub -s -u "$MQTT_CLI_USER" -pw "$MQTT_CLI_PASSWORD" -t "$IMEI/fota" >"$OUT" 2>/dev/null &
     SUB_PID=$!
     sleep 2  # let the subscription establish
-    mqtt pub -s -u macbook -pw '***REMOVED***' -t "$IMEI/cmd/fota" -m '{"cmd":"fota_update"}' >/dev/null 2>&1
+    mqtt pub -s -u "$MQTT_CLI_USER" -pw "$MQTT_CLI_PASSWORD" -t "$IMEI/cmd/fota" -m '{"cmd":"fota_update"}' >/dev/null 2>&1
     for _ in $(seq 1 50); do
         if grep -q updating "$OUT"; then
             echo "Fota update started"
@@ -157,5 +148,6 @@ west-setup:
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCMAKE_BUILD_TYPE={{BUILD_TYPE}} \
         -DNO_BUILD_TYPE_WARNING=ON \
+        -DEXTRA_CONF_FILE=secrets.conf \
     "
 

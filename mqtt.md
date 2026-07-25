@@ -2,7 +2,7 @@
 
 ## Broker
 
-- **Host:** TBD (e.g. HiveMQ Cloud endpoint)
+- **Host:** HiveMQ Cloud instance (hostname is deployment config, set in `project/app/secrets.conf` — not in VCS)
 - **Port:** 8883 (TLS)
 - **Auth:** Username/password per device and per web client
 
