@@ -10,6 +10,8 @@ export SYSBUILD := env_var_or_default("SYSBUILD", "true")
 export WEST_RUNNER := env_var_or_default("WEST_RUNNER", "jlink")
 export WEST_RUNNER_ARGS := env_var_or_default("WEST_RUNNER_ARGS", "")
 export BUILD_DIR := env_var_or_default("BUILD_DIR", "build/" + BOARD)
+# Explicit toolchain selection; unset it breaks FindZephyr-sdk.cmake under CMake >= 4.4
+export ZEPHYR_TOOLCHAIN_VARIANT := env_var_or_default("ZEPHYR_TOOLCHAIN_VARIANT", "zephyr")
 
 [private]
 @default:
