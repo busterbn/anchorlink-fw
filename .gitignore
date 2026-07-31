@@ -32,3 +32,4 @@ AGENTS.md
 # Device certificates and deployment credentials — never in VCS
 /ca/
 /project/app/secrets.conf
+claude.md
